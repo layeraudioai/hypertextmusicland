@@ -20,14 +20,14 @@ if (jsFile) {
     const jsContent = readFileSync(join(assets, jsFile), 'utf8');
     // Escape </script> to prevent premature closing
     const escapedJs = jsContent.replace(/<\/script>/gi, '<\\/script>');
-    html = html.replace(/<\/body>/, `<\\/body><script>${escapedJs}<\\/script><style>`);
+    html = html.replace(/<\/body>/, `<\/body><script>${escapedJs}<\/script><style>`);
 }
 
 if (cssFile) {
     const cssContent = readFileSync(join(assets, cssFile), 'utf8');
     // Escape </style> to prevent premature closing
     const escapedCss = cssContent.replace(/<\/style>/gi, '<\\/style>');
-    html = html.replace(/<style>/, `<style>${escapedCss}<\\/style>`);
+    html = html.replace(/<style>/, `<style>${escapedCss}<\/style>`);
 }
 
 writeFileSync(join(dist, 'index.html'), html);
