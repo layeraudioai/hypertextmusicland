@@ -43,7 +43,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
 
   // Pitch range: MIDI 36 (C2) to 84 (C6) = 48 notes
   const minPitch = 0;
-  const maxPitch = 512;
+  const maxPitch = 128;
   const totalPitches = maxPitch - minPitch + 1;
 
   const HEADER_HEIGHT = 32;
@@ -151,30 +151,30 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
         // Clicked empty space: Add new note
         setInteractionType(null);
         if (!e.shiftKey) {
-            onUpdateProject((prev) => ({
-              ...prev,
-              tracks: prev.tracks.map((t) =>
-                t.id === activeTrack.id ? { ...t, notes: t.notes.map(n => ({ ...n, selected: false })) } : t
-              ),
-            }));
+          onUpdateProject((prev) => ({
+            ...prev,
+            tracks: prev.tracks.map((t) =>
+              t.id === activeTrack.id ? { ...t, notes: t.notes.map(n => ({ ...n, selected: false })) } : t
+            ),
+          }));
         }
-        
+
         if (tool === 'draw') {
-            const newNote: Note = {
-              id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-              pitch,
-              time: Number(snappedBeat.toFixed(3)),
-              duration: snapValue * 2, // default length
-              velocity: 0.85,
-              selected: false, // Don't auto-select new note
-            };
-    
-            onUpdateProject((prev) => ({
-              ...prev,
-              tracks: prev.tracks.map((t) =>
-                t.id === activeTrack.id ? { ...t, notes: [...t.notes, newNote] } : t
-              ),
-            }));
+          const newNote: Note = {
+            id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            pitch,
+            time: Number(snappedBeat.toFixed(3)),
+            duration: snapValue * 2, // default length
+            velocity: 0.85,
+            selected: false, // Don't auto-select new note
+          };
+
+          onUpdateProject((prev) => ({
+            ...prev,
+            tracks: prev.tracks.map((t) =>
+              t.id === activeTrack.id ? { ...t, notes: [...t.notes, newNote] } : t
+            ),
+          }));
         }
       }
     }
@@ -182,11 +182,11 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isDragging || !gridRef.current || !dragStart) return;
-    
+
     const rect = gridRef.current.getBoundingClientRect();
     const currentX = e.clientX - rect.left + gridRef.current.scrollLeft;
     const currentY = (e.clientY - rect.top) + (gridRef.current.scrollTop - HEADER_HEIGHT);
-    
+
     if (interactionType === 'select') {
       setSelectionBox({
         x1: Math.min(dragStart.x, currentX),
@@ -199,7 +199,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
       const deltaY = currentY - dragStart.y;
       const beatDelta = Math.round(deltaX / pixelsPerBeat / snapValue) * snapValue;
       const pitchDelta = -Math.round(deltaY / noteRowHeight);
-      
+
       onUpdateProject((prev) => ({
         ...prev,
         tracks: prev.tracks.map((t) =>
@@ -209,9 +209,9 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
               const initial = dragInitialNotes.find(inote => inote.id === n.id);
               if (initial) {
                 return {
-                    ...n,
-                    time: Math.max(0, initial.time + beatDelta),
-                    pitch: Math.min(maxPitch, Math.max(minPitch, initial.pitch + pitchDelta))
+                  ...n,
+                  time: Math.max(0, initial.time + beatDelta),
+                  pitch: Math.min(maxPitch, Math.max(minPitch, initial.pitch + pitchDelta))
                 };
               }
               return n;
@@ -232,10 +232,10 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
             ...t,
             notes: t.notes.map(n => ({
               ...n,
-              selected: (n.time * pixelsPerBeat >= selectionBox.x1 && 
-                         n.time * pixelsPerBeat <= selectionBox.x2 &&
-                         (maxPitch - n.pitch) * noteRowHeight >= selectionBox.y1 &&
-                         (maxPitch - n.pitch) * noteRowHeight <= selectionBox.y2)
+              selected: (n.time * pixelsPerBeat >= selectionBox.x1 &&
+                n.time * pixelsPerBeat <= selectionBox.x2 &&
+                (maxPitch - n.pitch) * noteRowHeight >= selectionBox.y1 &&
+                (maxPitch - n.pitch) * noteRowHeight <= selectionBox.y2)
             }))
           } : t
         ),
@@ -309,7 +309,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
 
   const handleMouseMoveRef = useRef(handleMouseMove);
   const handleMouseUpRef = useRef(handleMouseUp);
-  
+
   useEffect(() => {
     handleMouseMoveRef.current = handleMouseMove;
     handleMouseUpRef.current = handleMouseUp;
@@ -318,38 +318,38 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
   // Global drag handling
   React.useEffect(() => {
     const handleGlobalMouseMove = (e: MouseEvent) => {
-        if (!gridRef.current) return;
-        
-        // Mock a React mouse event
-        const mockEvent = {
-            clientX: e.clientX,
-            clientY: e.clientY,
-            currentTarget: gridRef.current
-        } as unknown as React.MouseEvent<HTMLDivElement>;
-        
-        handleMouseMoveRef.current(mockEvent);
+      if (!gridRef.current) return;
+
+      // Mock a React mouse event
+      const mockEvent = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        currentTarget: gridRef.current
+      } as unknown as React.MouseEvent<HTMLDivElement>;
+
+      handleMouseMoveRef.current(mockEvent);
     };
 
     const handleGlobalMouseUp = () => {
-        handleMouseUpRef.current();
+      handleMouseUpRef.current();
     };
 
     if (isDragging) {
-        window.addEventListener('mousemove', handleGlobalMouseMove);
-        window.addEventListener('mouseup', handleGlobalMouseUp);
+      window.addEventListener('mousemove', handleGlobalMouseMove);
+      window.addEventListener('mouseup', handleGlobalMouseUp);
     }
 
     return () => {
-        window.removeEventListener('mousemove', handleGlobalMouseMove);
-        window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
     };
   }, [isDragging]);
 
   return (
-    <div 
-        id="piano-roll-container" 
-        className="flex-1 flex flex-col bg-slate-950 overflow-hidden select-none"
-        onContextMenu={(e) => e.preventDefault()}
+    <div
+      id="piano-roll-container"
+      className="flex-1 flex flex-col bg-slate-950 overflow-hidden select-none"
+      onContextMenu={(e) => e.preventDefault()}
     >
       {/* Piano Roll Toolbar */}
       <div className="flex flex-wrap items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-xs gap-3">
@@ -403,6 +403,8 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
             <option value="0.5" className="bg-slate-900">1/8 Note</option>
             <option value="0.25" className="bg-slate-900">1/16 Note</option>
             <option value="0.125" className="bg-slate-900">1/32 Note</option>
+            <option value="0.0625" className="bg-slate-900">1/64 Note</option>
+            <option value="0.03125" className="bg-slate-900">1/128 Note</option>
           </select>
         </div>
 

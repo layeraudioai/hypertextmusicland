@@ -172,19 +172,17 @@ export const TransportBar: React.FC<TransportBarProps> = ({
         {/* Total Bars */}
         <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs">
           <span className="text-[10px] text-slate-400 uppercase font-semibold">BARS</span>
-          <select
+          <input
+            type="number"
+            min="1"
+            max="2048"
             value={project.totalBars}
             onChange={(e) => {
-              const bars = parseInt(e.target.value);
+              const bars = Math.max(1, Math.min(2048, parseInt(e.target.value) || 1));
               onUpdateProject((prev) => ({ ...prev, totalBars: bars }));
             }}
-            className="bg-transparent text-slate-200 outline-none cursor-pointer font-mono font-bold text-xs"
-          >
-            <option value="2" className="bg-slate-900">2 Bars</option>
-            <option value="4" className="bg-slate-900">4 Bars</option>
-            <option value="8" className="bg-slate-900">8 Bars</option>
-            <option value="16" className="bg-slate-900">16 Bars</option>
-          </select>
+            className="w-16 bg-transparent text-slate-200 outline-none font-mono font-bold text-xs"
+          />
         </div>
 
         {/* 66GHz Latency & DSP indicator */}

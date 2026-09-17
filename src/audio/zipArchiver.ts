@@ -66,6 +66,17 @@ export async function exportFullDawZip(
       const paddedIndex = String(i + 1).padStart(2, '0');
       const safeTrackName = track.name.replace(/[^a-zA-Z0-9_-]/g, '_');
       stemsFolder?.file(`${paddedIndex}_${safeTrackName}.wav`, stemBlob);
+
+      // Include external audio stems if present
+      if (track.audioStem) {
+        try {
+          const response = await fetch(track.audioStem.url);
+          const audioBlob = await response.blob();
+          stemsFolder?.file(`${paddedIndex}_${safeTrackName}_Stem.wav`, audioBlob);
+        } catch (err) {
+          console.error(`Failed to fetch audio stem for ${track.name}:`, err);
+        }
+      }
     } catch (stemErr: any) {
       console.error(`Failed to render stem for ${track.name}:`, stemErr);
     }

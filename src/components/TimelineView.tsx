@@ -581,6 +581,22 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     </div>
                   );
                 })}
+
+                {/* Render Audio Stem Placeholder */}
+                {track.audioStem && (
+                  <div
+                    className="absolute bg-emerald-900/60 border border-emerald-500 rounded-sm flex items-center px-2 text-[10px] font-mono text-emerald-300 shadow-sm"
+                    style={{
+                      left: '0px',
+                      top: '10px',
+                      width: `${track.audioStem.duration * pixelsPerBeat}px`,
+                      height: '40px',
+                    }}
+                  >
+                    <Disc className="w-4 h-4 mr-2" />
+                    {track.audioStem.name}
+                  </div>
+                )}
               </div>
             );
           })}

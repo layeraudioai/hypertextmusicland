@@ -42,6 +42,14 @@ export interface TrackEffects {
   release: number; // 0.05 - 4 s
 }
 
+export interface AudioStem {
+  id: string;
+  name: string;
+  url: string; // Object URL
+  duration: number; // In beats
+  buffer?: AudioBuffer;
+}
+
 export interface Track {
   id: string;
   name: string;
@@ -53,6 +61,7 @@ export interface Track {
   solo: boolean;
   armed: boolean;
   notes: Note[];
+  audioStem?: AudioStem;
   effects: TrackEffects;
 }
 

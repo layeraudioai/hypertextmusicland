@@ -201,6 +201,22 @@ export class SynthEngine {
     this.synthesizeVoice(this.ctx, track, note.pitch, note.velocity, audioTime, durationSeconds);
   }
 
+  public scheduleAudioStem(track: Track, audioTime: number, bpm: number) {
+    if (!this.ctx || track.muted || !track.audioStem || !track.audioStem.buffer) return;
+    
+    const src = this.ctx.createBufferSource();
+    src.buffer = track.audioStem.buffer;
+    
+    const gainNode = this.ctx.createGain();
+    gainNode.gain.setValueAtTime(track.volume, audioTime);
+    
+    // Simple routing to master
+    src.connect(gainNode);
+    gainNode.connect(this.compressor || this.ctx.destination);
+    
+    src.start(audioTime);
+  }
+
   private pitchToFreq(pitch: number): number {
     return 440 * Math.pow(2, (pitch - 69) / 12);
   }
