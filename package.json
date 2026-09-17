@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
-    "build:aio": "npm install && npm audit fix --force && npm fund && npm run build && cd scripts && python inline.py",
-    "start": "node dist/server.js",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build:aio": "npm run build && cd scripts && (python3 inline.py || python inline.py || true)",
+    "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
+    "@google/genai": "^2.23.0",
     "@tailwindcss/vite": "^4.1.14",
     "@tonejs/midi": "^2.0.28",
     "@vitejs/plugin-react": "^5.0.4",
@@ -49,6 +50,7 @@
     "@types/node": "^22.14.0",
     "@vitest/coverage-v8": "^5.0.0",
     "autoprefixer": "^10.4.21",
+    "esbuild": "^0.28.2",
     "jsdom": "^30.0.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",

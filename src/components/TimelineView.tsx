@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Volume2,
   Sliders,
@@ -13,10 +13,103 @@ import {
   Piano,
   Music,
   Upload,
+  FileAudio,
+  Check,
 } from 'lucide-react';
 import { ProjectState, Track, InstrumentId, Note } from '../types/daw';
 import { SOUNDFONT_PRESETS, getPitchColor, getNoteName } from '../audio/constants';
-import { sampleManager } from '../audio/audioProcessor';
+import { sampleManager, decodeAudioFile, computeAudioMetrics } from '../audio/audioProcessor';
+import { synth } from '../audio/synthEngine';
+
+const AudioStemBlock: React.FC<{
+  track: Track;
+  pixelsPerBeat: number;
+  projectBpm: number;
+  totalBars: number;
+  onSyncBars: (bars: number) => void;
+}> = ({ track, pixelsPerBeat, projectBpm, totalBars, onSyncBars }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const stem = track.audioStem;
+  if (!stem) return null;
+
+  const durationSec = stem.buffer ? stem.buffer.duration : (stem.duration * 60) / projectBpm;
+  const beats = stem.duration;
+  const requiredBars = Math.max(1, Math.ceil(beats / 4));
+  const widthPx = Math.max(80, beats * pixelsPerBeat);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !stem.buffer) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const data = stem.buffer.getChannelData(0);
+    const step = Math.ceil(data.length / w);
+    const amp = h / 2;
+
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.5)';
+    for (let i = 0; i < w; i++) {
+      let min = 1.0;
+      let max = -1.0;
+      for (let j = 0; j < step; j++) {
+        const datum = data[i * step + j] || 0;
+        if (datum < min) min = datum;
+        if (datum > max) max = datum;
+      }
+      ctx.fillRect(i, (1 + min) * amp, 1, Math.max(2, (max - min) * amp));
+    }
+  }, [stem.buffer, widthPx]);
+
+  return (
+    <div
+      className="absolute bg-emerald-950/70 border border-emerald-500/70 rounded-md overflow-hidden flex flex-col justify-between shadow-lg backdrop-blur-sm z-10"
+      style={{
+        left: '0px',
+        top: '6px',
+        width: `${widthPx}px`,
+        height: '76px',
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Waveform Canvas */}
+      <canvas
+        ref={canvasRef}
+        width={Math.min(1800, Math.floor(widthPx))}
+        height={76}
+        className="absolute inset-0 w-full h-full pointer-events-none opacity-80"
+      />
+
+      {/* Header bar */}
+      <div className="relative z-10 flex items-center justify-between px-2 py-1 bg-emerald-950/90 border-b border-emerald-800/50 text-[10px] font-mono text-emerald-200">
+        <div className="flex items-center gap-1.5 truncate">
+          <Disc className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span className="font-bold truncate">{stem.name}</span>
+        </div>
+        <span className="text-[9px] text-emerald-400 bg-emerald-900/80 px-1.5 py-0.2 rounded shrink-0">
+          {durationSec.toFixed(2)}s • {beats.toFixed(1)} beats • {requiredBars} bars
+        </span>
+      </div>
+
+      {/* Footer bar with sync action */}
+      <div className="relative z-10 flex items-center justify-between px-2 py-1 text-[9px] font-mono text-emerald-300">
+        <span className="text-emerald-400/80">Audio Stem Lane</span>
+        {totalBars !== requiredBars && (
+          <button
+            onClick={() => onSyncBars(requiredBars)}
+            className="px-1.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold transition-colors text-[9px]"
+            title={`Adjust project total bars to ${requiredBars} to match this audio stem`}
+          >
+            Fit Project ({requiredBars} Bars)
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
 
 interface TimelineViewProps {
   project: ProjectState;
@@ -36,10 +129,102 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   onOpenTransmuter,
 }) => {
   const [expandedFxTrackId, setExpandedFxTrackId] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isDragOverTimeline, setIsDragOverTimeline] = useState(false);
+  const audioFileInputRef = useRef<HTMLInputElement>(null);
 
   const totalBeats = project.totalBars * 4;
   const pixelsPerBeat = 48; // Width per beat
   const timelineWidth = totalBeats * pixelsPerBeat;
+
+  const processImportAudioFile = async (file: File) => {
+    try {
+      synth.init();
+      const ctx = synth.getAudioContext();
+      const buffer = await decodeAudioFile(file, ctx || undefined);
+      const metrics = computeAudioMetrics(buffer, project.bpm, 4);
+
+      const objectUrl = URL.createObjectURL(file);
+      const stemId = `stem-${Date.now()}`;
+      const newTrack: Track = {
+        id: `track-stem-${Date.now()}`,
+        name: `Stem: ${file.name.replace(/\.[^/.]+$/, '')}`,
+        instrument: 'synth_lead',
+        color: '#10b981',
+        volume: 0.85,
+        pan: 0,
+        muted: false,
+        solo: false,
+        armed: false,
+        notes: [],
+        audioStem: {
+          id: stemId,
+          name: file.name,
+          url: objectUrl,
+          duration: metrics.beats,
+          buffer: buffer,
+        },
+        effects: {
+          cutoff: 12000,
+          resonance: 1.5,
+          distortion: 0,
+          delaySend: 0,
+          delayTime: 0.35,
+          reverbSend: 0,
+          attack: 0.01,
+          decay: 0.3,
+          sustain: 0.8,
+          release: 0.3,
+        },
+      };
+
+      onUpdateProject((prev) => ({
+        ...prev,
+        totalBars: Math.max(prev.totalBars, metrics.bars),
+        tracks: [...prev.tracks, newTrack],
+        selectedTrackId: newTrack.id,
+      }));
+
+      setToastMessage(
+        `✓ Imported "${file.name}" (${metrics.durationSeconds.toFixed(2)}s, ${metrics.beats.toFixed(1)} beats). Project expanded to ${metrics.bars} bars!`
+      );
+      setTimeout(() => setToastMessage(null), 6000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Error importing audio file: ' + err.message);
+    }
+  };
+
+  const handleAudioFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      processImportAudioFile(e.target.files[0]);
+      e.target.value = '';
+    }
+  };
+
+  const handleTimelineDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverTimeline(true);
+  };
+
+  const handleTimelineDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverTimeline(false);
+  };
+
+  const handleTimelineDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverTimeline(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file.type.startsWith('audio/') || /\.(wav|mp3|ogg|flac|m4a|aif|aiff)$/i.test(file.name)) {
+        processImportAudioFile(file);
+      }
+    }
+  };
 
   const handleToggleMute = (trackId: string) => {
     onUpdateProject((prev) => ({
@@ -148,16 +333,55 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 <span>Upload Sample / SF2</span>
               </button>
             )}
+            <button
+              onClick={() => audioFileInputRef.current?.click()}
+              className="px-2 py-0.5 rounded bg-emerald-950/70 hover:bg-emerald-900/70 text-emerald-300 hover:text-emerald-200 border border-emerald-800/60 transition-colors text-[11px] flex items-center gap-1 font-semibold ml-1"
+              title="Import audio file (WAV/MP3/OGG/FLAC) as audio stem track & auto-calculate bars"
+            >
+              <FileAudio className="w-3 h-3" />
+              <span>+ Audio Stem</span>
+            </button>
+            <input
+              type="file"
+              ref={audioFileInputRef}
+              accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.aif,.aiff"
+              onChange={handleAudioFileInputChange}
+              className="hidden"
+            />
           </div>
         </div>
 
-        <div className="text-[11px] text-slate-400 font-mono">
-          Length: {project.totalBars} Bars ({totalBeats} Beats)
+        <div className="flex items-center gap-3">
+          {toastMessage && (
+            <div className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-700/60 text-emerald-300 font-mono text-[11px] flex items-center gap-1.5 animate-fadeIn">
+              <Check className="w-3 h-3 text-emerald-400" />
+              <span>{toastMessage}</span>
+            </div>
+          )}
+          <div className="text-[11px] text-slate-400 font-mono">
+            Length: {project.totalBars} Bars ({totalBeats} Beats)
+          </div>
         </div>
       </div>
 
-      {/* Main Track Workspace */}
-      <div className="flex-1 flex overflow-auto relative">
+      {/* Main Track Workspace with Drag and Drop */}
+      <div
+        className="flex-1 flex overflow-auto relative"
+        onDragOver={handleTimelineDragOver}
+        onDragLeave={handleTimelineDragLeave}
+        onDrop={handleTimelineDrop}
+      >
+        {isDragOverTimeline && (
+          <div className="absolute inset-0 z-50 bg-emerald-950/80 border-2 border-dashed border-emerald-400 flex flex-col items-center justify-center pointer-events-none backdrop-blur-xs">
+            <FileAudio className="w-12 h-12 text-emerald-400 animate-bounce mb-2" />
+            <span className="text-sm font-bold text-emerald-200">
+              Drop audio file to import as track & calculate bar count
+            </span>
+            <span className="text-xs text-emerald-400 font-mono">
+              WAV, MP3, FLAC, OGG, AIFF
+            </span>
+          </div>
+        )}
         {/* Left: Track Headers Column */}
         <div className="w-80 flex-shrink-0 bg-slate-900 border-r border-slate-800 z-10">
           {/* Header ruler placeholder */}
@@ -513,7 +737,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
           {/* Scrubbing Playhead Line */}
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-cyan-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] z-30 pointer-events-none transition-all duration-75"
+            className="absolute top-0 bottom-0 w-0.5 bg-cyan-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] z-30 pointer-events-none"
             style={{ left: `${currentBeat * pixelsPerBeat}px` }}
           >
             <div className="w-2.5 h-2.5 -ml-1 bg-cyan-400 rotate-45" />
@@ -534,7 +758,13 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                   width: `${timelineWidth}px`,
                   height: isExpandedFx ? '175px' : '95px',
                 }}
-                onClick={() => onSelectTrackForPianoRoll(track.id)}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const clickX = e.clientX - rect.left;
+                  const beat = Math.max(0, Math.min(totalBeats, clickX / pixelsPerBeat));
+                  onSeek(Number(beat.toFixed(2)));
+                  onSelectTrackForPianoRoll(track.id);
+                }}
               >
                 {/* Bar Grid background lines */}
                 <div className="absolute inset-0 flex pointer-events-none">
@@ -582,20 +812,19 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                   );
                 })}
 
-                {/* Render Audio Stem Placeholder */}
+                {/* Render Audio Stem with real waveform and bar fit button */}
                 {track.audioStem && (
-                  <div
-                    className="absolute bg-emerald-900/60 border border-emerald-500 rounded-sm flex items-center px-2 text-[10px] font-mono text-emerald-300 shadow-sm"
-                    style={{
-                      left: '0px',
-                      top: '10px',
-                      width: `${track.audioStem.duration * pixelsPerBeat}px`,
-                      height: '40px',
+                  <AudioStemBlock
+                    track={track}
+                    pixelsPerBeat={pixelsPerBeat}
+                    projectBpm={project.bpm}
+                    totalBars={project.totalBars}
+                    onSyncBars={(bars) => {
+                      onUpdateProject((prev) => ({ ...prev, totalBars: bars }));
+                      setToastMessage(`✓ Project length updated to ${bars} bars to match "${track.audioStem?.name}"!`);
+                      setTimeout(() => setToastMessage(null), 4000);
                     }}
-                  >
-                    <Disc className="w-4 h-4 mr-2" />
-                    {track.audioStem.name}
-                  </div>
+                  />
                 )}
               </div>
             );

@@ -19,6 +19,7 @@ import {
   RotateCcw,
   Trash2,
   FolderArchive,
+  GitBranch,
 } from 'lucide-react';
 import { ProjectState } from '../types/daw';
 
@@ -30,6 +31,7 @@ interface HeaderProps {
   onOpenLayAi: () => void;
   onOpenSonicRng: () => void;
   onOpenAudioTransmuter: (tab?: 'audio-to-sf2' | 'audio-to-midi' | 'midi-sf2-to-audio' | 'midi-to-audio' | 'sf2-to-audio') => void;
+  onOpenGitHubSync?: () => void;
   onExportWav: () => void;
   onExportMidi: () => void;
   onExportVideo: () => void;
@@ -56,6 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
   onExportMidi,
   onExportVideo,
   onExportFullZip,
+  onOpenGitHubSync,
   onClearProject,
   onClearWorkspace,
   onSaveProject,
@@ -293,6 +296,17 @@ export const Header: React.FC<HeaderProps> = ({
               <FolderArchive className="w-3.5 h-3.5 text-purple-200" />
               <span>Full DAW ZIP</span>
             </button>
+            {onOpenGitHubSync && (
+              <button
+                id="btn-github-sync"
+                onClick={onOpenGitHubSync}
+                title="Sync DAW project with GitHub repository: Commit, Push & Remote configuration"
+                className="px-2.5 py-1 text-xs font-semibold rounded bg-slate-900 hover:bg-slate-800 text-sky-400 hover:text-sky-300 border border-slate-700/80 flex items-center gap-1.5 transition-colors cursor-pointer ml-1"
+              >
+                <GitBranch className="w-3.5 h-3.5" />
+                <span>GitHub</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

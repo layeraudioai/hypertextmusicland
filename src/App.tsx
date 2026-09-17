@@ -18,6 +18,7 @@ import { AudioTransmuterModal } from './components/AudioTransmuterModal';
 import { VirtualKeyboard } from './components/VirtualKeyboard';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { FullSaveZipModal } from './components/FullSaveZipModal';
+import { GitHubSyncModal } from './components/GitHubSyncModal';
 
 export default function App() {
   const [project, setProject] = useState<ProjectState>(() => {
@@ -50,6 +51,7 @@ export default function App() {
   const [isClearProjectOpen, setIsClearProjectOpen] = useState(false);
   const [isClearWorkspaceOpen, setIsClearWorkspaceOpen] = useState(false);
   const [isFullSaveZipOpen, setIsFullSaveZipOpen] = useState(false);
+  const [isGitHubSyncOpen, setIsGitHubSyncOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // References for high-precision audio scheduler
@@ -144,9 +146,16 @@ export default function App() {
         if (isLooping) {
           nextBeat = nextBeat % totalBeats;
           scheduledNotesRef.current.clear();
+          synth.stopAllAudioStems();
+          projectRef.current.tracks.forEach((track) => {
+            if (!track.muted && track.audioStem && track.audioStem.buffer) {
+              synth.scheduleAudioStem(track, now, bpm, 0);
+            }
+          });
         } else {
           setIsPlaying(false);
           setCurrentBeat(0);
+          synth.stopAllAudioStems();
           return;
         }
       }
@@ -193,11 +202,19 @@ export default function App() {
       timerId = setTimeout(scheduleNotes, lookaheadMs);
     };
 
+    // On playback start, schedule any audio stems from currentBeat
+    projectRef.current.tracks.forEach((track) => {
+      if (!track.muted && track.audioStem && track.audioStem.buffer) {
+        synth.scheduleAudioStem(track, audioCtx.currentTime, projectRef.current.bpm, currentBeatRef.current);
+      }
+    });
+
     scheduleNotes();
 
     return () => {
       clearTimeout(timerId);
       lastAudioTimeRef.current = 0;
+      synth.stopAllAudioStems();
     };
   }, [isPlaying, isLooping, metronomeOn]);
 
@@ -209,6 +226,7 @@ export default function App() {
         e.preventDefault();
         setIsPlaying((p) => {
           if (!p) scheduledNotesRef.current.clear();
+          else synth.stopAllAudioStems();
           return !p;
         });
       }
@@ -221,6 +239,7 @@ export default function App() {
     synth.init();
     setIsPlaying((p) => {
       if (!p) scheduledNotesRef.current.clear();
+      else synth.stopAllAudioStems();
       return !p;
     });
   };
@@ -229,11 +248,23 @@ export default function App() {
     setIsPlaying(false);
     setCurrentBeat(0);
     scheduledNotesRef.current.clear();
+    synth.stopAllAudioStems();
   };
 
   const handleSeek = (beat: number) => {
     setCurrentBeat(beat);
     scheduledNotesRef.current.clear();
+    synth.stopAllAudioStems();
+    if (isPlaying) {
+      const audioCtx = synth.getAudioContext();
+      if (audioCtx) {
+        projectRef.current.tracks.forEach((track) => {
+          if (!track.muted && track.audioStem && track.audioStem.buffer) {
+            synth.scheduleAudioStem(track, audioCtx.currentTime, projectRef.current.bpm, beat);
+          }
+        });
+      }
+    }
   };
 
   // AuraOffline: Glitch-free WAV Bouncing
@@ -493,6 +524,7 @@ export default function App() {
         onExportMidi={handleExportMidi}
         onExportVideo={() => setActiveView('video')}
         onExportFullZip={() => setIsFullSaveZipOpen(true)}
+        onOpenGitHubSync={() => setIsGitHubSyncOpen(true)}
         onClearProject={() => setIsClearProjectOpen(true)}
         onClearWorkspace={() => setIsClearWorkspaceOpen(true)}
         onSaveProject={handleSaveProject}
@@ -638,6 +670,12 @@ export default function App() {
         isOpen={isFullSaveZipOpen}
         onClose={() => setIsFullSaveZipOpen(false)}
         project={project}
+      />
+
+      {/* GitHub Repository Sync Modal */}
+      <GitHubSyncModal
+        isOpen={isGitHubSyncOpen}
+        onClose={() => setIsGitHubSyncOpen(false)}
       />
 
       {/* Quick Action Toast Notification */}

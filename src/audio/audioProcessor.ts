@@ -50,6 +50,27 @@ export async function decodeAudioFile(file: File, targetCtx?: BaseAudioContext):
   return await ctx.decodeAudioData(arrayBuffer);
 }
 
+export interface AudioMetrics {
+  durationSeconds: number;
+  sampleRate: number;
+  numberOfChannels: number;
+  beats: number;
+  bars: number;
+}
+
+export function computeAudioMetrics(buffer: AudioBuffer, bpm: number, beatsPerBar: number = 4): AudioMetrics {
+  const durationSeconds = buffer.duration;
+  const beats = (durationSeconds * bpm) / 60;
+  const bars = Math.max(1, Math.ceil(beats / beatsPerBar));
+  return {
+    durationSeconds,
+    sampleRate: buffer.sampleRate,
+    numberOfChannels: buffer.numberOfChannels,
+    beats,
+    bars,
+  };
+}
+
 // 2. High-precision Autocorrelation Pitch Detector
 export interface PitchDetectionResult {
   frequency: number; // in Hz

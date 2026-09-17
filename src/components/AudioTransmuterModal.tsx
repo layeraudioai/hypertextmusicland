@@ -374,6 +374,9 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
     synth.registerCustomSample(instId, audioBuffer, rootPitchOverride);
 
     // Add a new track to the DAW utilizing this SoundFont
+    const beats = (audioBuffer.duration * project.bpm) / 60;
+    const requiredBars = Math.max(1, Math.ceil(beats / 4));
+
     const newTrack: Track = {
       id: `track-${Date.now()}`,
       name: sf2InstrumentName,
@@ -401,11 +404,172 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
 
     onUpdateProject((prev) => ({
       ...prev,
+      totalBars: Math.max(prev.totalBars, requiredBars),
       tracks: [...prev.tracks, newTrack],
       selectedTrackId: newTrack.id,
     }));
 
-    setNotification(`✓ Registered "${sf2InstrumentName}" into DAW! Playable across all 88 keys.`);
+    setNotification(`✓ Registered "${sf2InstrumentName}" into DAW! Project set to ${Math.max(project.totalBars, requiredBars)} bars.`);
+  };
+
+  const handleSyncProjectBarsToAudio = () => {
+    if (!audioBuffer) return;
+    const beats = (audioBuffer.duration * project.bpm) / 60;
+    const requiredBars = Math.max(1, Math.ceil(beats / 4));
+    onUpdateProject((prev) => ({
+      ...prev,
+      totalBars: requiredBars,
+    }));
+    setNotification(`✓ Synchronized project length to ${requiredBars} bars (${beats.toFixed(1)} beats) based on input audio!`);
+  };
+
+  const handleAddAudioStemTrackToDaw = () => {
+    if (!audioBuffer) return;
+    const beats = (audioBuffer.duration * project.bpm) / 60;
+    const requiredBars = Math.max(1, Math.ceil(beats / 4));
+    const stemId = `stem-${Date.now()}`;
+    const objectUrl = audioFile ? URL.createObjectURL(audioFile) : '';
+
+    const newTrack: Track = {
+      id: `track-stem-${Date.now()}`,
+      name: `Stem: ${audioFile?.name.replace(/\.[^/.]+$/, '') || 'Input Audio'}`,
+      instrument: 'synth_lead',
+      color: '#10b981',
+      volume: 0.85,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      notes: [],
+      audioStem: {
+        id: stemId,
+        name: audioFile?.name || 'Input Audio',
+        url: objectUrl,
+        duration: beats,
+        buffer: audioBuffer,
+      },
+      effects: {
+        cutoff: 12000,
+        resonance: 1.5,
+        distortion: 0.0,
+        delaySend: 0.2,
+        delayTime: 0.35,
+        reverbSend: 0.3,
+        attack: 0.01,
+        decay: 0.3,
+        sustain: 0.8,
+        release: 0.4,
+      },
+    };
+
+    onUpdateProject((prev) => ({
+      ...prev,
+      totalBars: Math.max(prev.totalBars, requiredBars),
+      tracks: [...prev.tracks, newTrack],
+      selectedTrackId: newTrack.id,
+    }));
+
+    setNotification(
+      `✓ Added "${newTrack.name}" to DAW! Project set to ${Math.max(project.totalBars, requiredBars)} bars (${beats.toFixed(1)} beats).`
+    );
+  };
+
+  const handleAddStemToDaw = (stem: { id: string; name: string; url: string }) => {
+    if (!audioBuffer) return;
+    const beats = (audioBuffer.duration * project.bpm) / 60;
+    const requiredBars = Math.max(1, Math.ceil(beats / 4));
+
+    const newTrack: Track = {
+      id: `track-stem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: stem.name,
+      instrument: 'synth_lead',
+      color: '#6366f1',
+      volume: 0.85,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      notes: [],
+      audioStem: {
+        id: stem.id,
+        name: stem.name,
+        url: stem.url,
+        duration: beats,
+        buffer: audioBuffer,
+      },
+      effects: {
+        cutoff: 12000,
+        resonance: 1.5,
+        distortion: 0,
+        delaySend: 0.2,
+        delayTime: 0.35,
+        reverbSend: 0.25,
+        attack: 0.01,
+        decay: 0.3,
+        sustain: 0.8,
+        release: 0.4,
+      },
+    };
+
+    onUpdateProject((prev) => ({
+      ...prev,
+      totalBars: Math.max(prev.totalBars, requiredBars),
+      tracks: [...prev.tracks, newTrack],
+      selectedTrackId: newTrack.id,
+    }));
+
+    setNotification(
+      `✓ Added Stem "${stem.name}" to DAW! Project length set to ${Math.max(project.totalBars, requiredBars)} bars.`
+    );
+  };
+
+  const handleAddAllStemsToDaw = () => {
+    if (!detectedStems || detectedStems.stems.length === 0 || !audioBuffer) return;
+    const beats = (audioBuffer.duration * project.bpm) / 60;
+    const requiredBars = Math.max(1, Math.ceil(beats / 4));
+
+    const newTracks: Track[] = detectedStems.stems.map((stem, idx) => ({
+      id: `track-stem-${Date.now()}-${idx}`,
+      name: stem.name,
+      instrument: 'synth_lead',
+      color: ['#6366f1', '#a855f7', '#ec4899', '#3b82f6', '#10b981'][idx % 5],
+      volume: 0.85,
+      pan: idx === 0 ? 0 : idx % 2 === 1 ? -0.3 : 0.3,
+      muted: false,
+      solo: false,
+      armed: false,
+      notes: [],
+      audioStem: {
+        id: stem.id,
+        name: stem.name,
+        url: stem.url,
+        duration: beats,
+        buffer: audioBuffer,
+      },
+      effects: {
+        cutoff: 12000,
+        resonance: 1.5,
+        distortion: 0,
+        delaySend: 0.2,
+        delayTime: 0.35,
+        reverbSend: 0.25,
+        attack: 0.01,
+        decay: 0.3,
+        sustain: 0.8,
+        release: 0.4,
+      },
+    }));
+
+    onUpdateProject((prev) => ({
+      ...prev,
+      totalBars: Math.max(prev.totalBars, requiredBars),
+      tracks: [...prev.tracks, ...newTracks],
+      selectedTrackId: newTracks[0]?.id || prev.selectedTrackId,
+    }));
+
+    setNotification(
+      `✓ Added all ${newTracks.length} stems to DAW and expanded project to ${Math.max(project.totalBars, requiredBars)} bars!`
+    );
   };
 
   const handleDownloadSf2Binary = () => {
@@ -853,6 +1017,40 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {/* Audio Bar Count & Length Telemetry */}
+                  {(() => {
+                    const durationSec = audioBuffer.duration;
+                    const beats = (durationSec * project.bpm) / 60;
+                    const requiredBars = Math.max(1, Math.ceil(beats / 4));
+                    return (
+                      <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2 font-mono">
+                          <span className="text-emerald-400 font-bold">Audio Metrics:</span>
+                          <span className="text-slate-300">
+                            {durationSec.toFixed(2)}s = <strong className="text-cyan-300">{beats.toFixed(1)} beats</strong> @ {project.bpm} BPM (<strong className="text-purple-300">{requiredBars} bars</strong>)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleSyncProjectBarsToAudio}
+                            className="px-2.5 py-1 rounded-md bg-purple-600/90 hover:bg-purple-500 text-white font-bold text-[11px] transition-colors"
+                            title={`Set project totalBars to ${requiredBars}`}
+                          >
+                            Sync Project to {requiredBars} Bars
+                          </button>
+                          <button
+                            onClick={handleAddAudioStemTrackToDaw}
+                            className="px-2.5 py-1 rounded-md bg-emerald-600/90 hover:bg-emerald-500 text-slate-950 font-bold text-[11px] flex items-center gap-1 transition-colors"
+                            title="Add input audio as stem track and fit project bar count"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>+ Add as Stem Track</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="h-20 w-full relative rounded-lg overflow-hidden border border-slate-800/80">
                     <canvas
@@ -1517,11 +1715,21 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
 
                 {detectedStems && (
                   <div className="mt-4 flex flex-col gap-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Sparkles className="w-4 h-4 text-emerald-400" />
-                      <span className="font-bold text-slate-200 text-xs">
-                        Dynamically Detected Ensemble Size: <span className="text-emerald-400">{detectedStems.ensembleSize} instruments</span>
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-900 border border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-emerald-400" />
+                        <span className="font-bold text-slate-200 text-xs">
+                          Dynamically Detected Ensemble Size: <span className="text-emerald-400">{detectedStems.ensembleSize} instruments</span>
+                        </span>
+                      </div>
+                      <button
+                        onClick={handleAddAllStemsToDaw}
+                        className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold flex items-center gap-1.5 text-xs transition-colors cursor-pointer shadow-md"
+                        title="Create separate DAW tracks for each separated stem and fit project bar count"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add All Stems to DAW (Auto-fits Bars)</span>
+                      </button>
                     </div>
                     {detectedStems.multiChannelUrl && (
                       <div className="p-4 rounded-xl border border-fuchsia-500/50 bg-slate-900 flex flex-col gap-2 shadow-xl mb-2">
@@ -1539,9 +1747,19 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                     )}
                     {detectedStems.stems.map((stem, index) => (
                       <div key={stem.id} className="p-4 rounded-xl border border-indigo-500/50 bg-slate-900 flex flex-col gap-2 shadow-xl">
-                        <div className="flex items-center gap-2">
-                          <FileAudio className="w-4 h-4 text-indigo-400" />
-                          <span className="font-bold text-slate-200 text-xs">{stem.name}</span>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <FileAudio className="w-4 h-4 text-indigo-400" />
+                            <span className="font-bold text-slate-200 text-xs">{stem.name}</span>
+                          </div>
+                          <button
+                            onClick={() => handleAddStemToDaw(stem)}
+                            className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-bold flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
+                            title="Add this single stem as a DAW track"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>+ Add to DAW Track</span>
+                          </button>
                         </div>
                         <audio src={stem.url} controls className="w-full h-10 rounded-lg" />
                         <div className="flex gap-3">

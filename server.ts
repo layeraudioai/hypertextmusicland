@@ -1,13 +1,10 @@
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
@@ -18,6 +15,151 @@ async function startServer() {
   // API Health Check
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', service: 'AuraVision DAW Hybrid Engine' });
+  });
+
+  // Git Repository & Sync APIs
+  app.get('/api/git/status', (req, res) => {
+    try {
+      let isGitRepo = true;
+      let branch = 'main';
+      let lastCommit = { hash: '', message: '', date: '' };
+      let remoteUrl = '';
+      let statusOutput = '';
+
+      try {
+        branch = execSync('git branch --show-current', { encoding: 'utf-8' }).trim() || 'main';
+        const logOutput = execSync('git log -1 --format="%h||%s||%cd"', { encoding: 'utf-8' }).trim();
+        if (logOutput) {
+          const [hash, message, date] = logOutput.split('||');
+          lastCommit = { hash: hash || '', message: message || '', date: date || '' };
+        }
+        try {
+          remoteUrl = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim();
+        } catch (e) {
+          remoteUrl = '';
+        }
+        statusOutput = execSync('git status --porcelain', { encoding: 'utf-8' }).trim();
+      } catch (e: any) {
+        isGitRepo = false;
+      }
+
+      const modifiedFiles = statusOutput ? statusOutput.split('\n').map((l) => l.trim()).filter(Boolean) : [];
+
+      res.json({
+        success: true,
+        isGitRepo,
+        branch,
+        lastCommit,
+        remoteUrl,
+        clean: modifiedFiles.length === 0,
+        modifiedFiles,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/git/commit', (req, res) => {
+    try {
+      const { message = 'Update AuraVision DAW session' } = req.body;
+      try {
+        execSync('git config user.name "AuraVision DAW"');
+        execSync('git config user.email "auravision@studio.internal"');
+      } catch (e) {}
+
+      execSync('git add .');
+      const safeMsg = (message || 'Update AuraVision DAW session').replace(/"/g, '\\"');
+      try {
+        execSync(`git commit -m "${safeMsg}"`);
+      } catch (e) {
+        // Nothing to commit is okay
+      }
+
+      let lastCommit = { hash: '', message: '', date: '' };
+      try {
+        const logOutput = execSync('git log -1 --format="%h||%s||%cd"', { encoding: 'utf-8' }).trim();
+        const [hash, commitMessage, date] = logOutput.split('||');
+        lastCommit = { hash: hash || '', message: commitMessage || '', date: date || '' };
+      } catch (e) {}
+
+      res.json({
+        success: true,
+        lastCommit,
+        message: 'Changes successfully committed to local repository.',
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/git/remote', (req, res) => {
+    try {
+      const { remoteUrl } = req.body;
+      if (!remoteUrl || typeof remoteUrl !== 'string') {
+        return res.status(400).json({ success: false, error: 'Valid remote URL is required' });
+      }
+      try {
+        execSync('git remote remove origin');
+      } catch (e) {}
+      execSync(`git remote add origin ${remoteUrl.trim()}`);
+      res.json({ success: true, remoteUrl: remoteUrl.trim() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/git/push', (req, res) => {
+    try {
+      const { token, remoteUrl, branch = 'main' } = req.body;
+      let targetRemote = (remoteUrl || '').trim();
+      if (!targetRemote) {
+        try {
+          targetRemote = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim();
+        } catch (e) {}
+      }
+
+      if (!targetRemote) {
+        return res.status(400).json({
+          success: false,
+          error: 'No remote GitHub repository configured. Please set the GitHub repository URL.',
+        });
+      }
+
+      // Stage and commit any outstanding changes
+      try {
+        execSync('git add .');
+        execSync('git commit -m "Sync project changes with GitHub"');
+      } catch (e) {}
+
+      try {
+        execSync(`git branch -M ${branch}`);
+      } catch (e) {}
+
+      let authenticatedUrl = targetRemote;
+      if (token && targetRemote.startsWith('https://github.com/')) {
+        const cleanUrl = targetRemote.replace('https://', '');
+        authenticatedUrl = `https://${encodeURIComponent(token.trim())}@${cleanUrl}`;
+      }
+
+      const output = execSync(`git push ${authenticatedUrl} ${branch} --force`, {
+        encoding: 'utf-8',
+        timeout: 25000,
+      });
+
+      res.json({
+        success: true,
+        message: 'Successfully pushed and synced with GitHub repository!',
+        output,
+      });
+    } catch (err: any) {
+      console.error('Git push error:', err);
+      res.status(500).json({
+        success: false,
+        error:
+          err.message ||
+          'Failed to push to GitHub. Verify repository URL, token permissions (repo scope), and network accessibility.',
+      });
+    }
   });
 
   // LayAI Generative Composer API

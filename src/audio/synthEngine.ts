@@ -201,9 +201,28 @@ export class SynthEngine {
     this.synthesizeVoice(this.ctx, track, note.pitch, note.velocity, audioTime, durationSeconds);
   }
 
-  public scheduleAudioStem(track: Track, audioTime: number, bpm: number) {
+  private activeStemSources: Map<string, AudioBufferSourceNode> = new Map();
+
+  public stopAllAudioStems() {
+    this.activeStemSources.forEach((src) => {
+      try {
+        src.stop();
+        src.disconnect();
+      } catch (e) {}
+    });
+    this.activeStemSources.clear();
+  }
+
+  public scheduleAudioStem(track: Track, audioTime: number, bpm: number, offsetBeats: number = 0) {
     if (!this.ctx || track.muted || !track.audioStem || !track.audioStem.buffer) return;
     
+    if (this.activeStemSources.has(track.id)) {
+      try {
+        this.activeStemSources.get(track.id)?.stop();
+      } catch (e) {}
+      this.activeStemSources.delete(track.id);
+    }
+
     const src = this.ctx.createBufferSource();
     src.buffer = track.audioStem.buffer;
     
@@ -214,7 +233,16 @@ export class SynthEngine {
     src.connect(gainNode);
     gainNode.connect(this.compressor || this.ctx.destination);
     
-    src.start(audioTime);
+    const offsetSeconds = (offsetBeats * 60) / bpm;
+    if (offsetSeconds < track.audioStem.buffer.duration) {
+      src.start(audioTime, offsetSeconds);
+      this.activeStemSources.set(track.id, src);
+      src.onended = () => {
+        if (this.activeStemSources.get(track.id) === src) {
+          this.activeStemSources.delete(track.id);
+        }
+      };
+    }
   }
 
   private pitchToFreq(pitch: number): number {
@@ -532,9 +560,22 @@ export class SynthEngine {
     masterGain.connect(comp);
     comp.connect(offlineCtx.destination);
 
-    // Schedule all notes across all tracks
+    // Schedule all notes & audio stems across all tracks
     for (const track of project.tracks) {
       if (track.muted) continue;
+      if (track.audioStem && track.audioStem.buffer) {
+        try {
+          const stemSrc = offlineCtx.createBufferSource();
+          stemSrc.buffer = track.audioStem.buffer;
+          const stemGain = offlineCtx.createGain();
+          stemGain.gain.setValueAtTime(track.volume, 0);
+          stemSrc.connect(stemGain);
+          stemGain.connect(masterGain);
+          stemSrc.start(0);
+        } catch (e) {
+          console.warn('Could not render offline audio stem:', e);
+        }
+      }
       for (const note of track.notes) {
         const noteStartTime = note.time * beatSeconds;
         const noteDuration = note.duration * beatSeconds;
