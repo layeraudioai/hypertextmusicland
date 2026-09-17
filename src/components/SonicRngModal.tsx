@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Dices, X, Wand2, Volume2, Sparkles, Sliders, Zap } from 'lucide-react';
 import { ProjectState, Track } from '../types/daw';
 import { SonicRNGEngine } from '../audio/sonicRng';
+import { SeededRNG } from '../audio/seededRng';
 import { MidiMuseEngine } from '../audio/midiMuse';
 import { synth } from '../audio/synthEngine';
 
