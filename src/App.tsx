@@ -303,19 +303,19 @@ export default function App() {
           }));
 
           // Calculate required totalBars to fit notes
-          let maxBeat = 16;
+          let maxBeat = 0;
           newTracks.forEach((tr) => {
             tr.notes.forEach((n) => {
               if (n.time + n.duration > maxBeat) maxBeat = n.time + n.duration;
             });
           });
-          const calculatedBars = Math.max(4, Math.ceil(maxBeat / 4));
+          const calculatedBars = Math.ceil(maxBeat / 4);
 
           return {
             ...prev,
             title: parsed.title || prev.title,
             bpm: parsed.bpm || prev.bpm,
-            totalBars: Math.min(32, calculatedBars),
+            totalBars: Math.max(prev.totalBars, calculatedBars),
             tracks: newTracks,
             selectedTrackId: newTracks[0].id,
           };
