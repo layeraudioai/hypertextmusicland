@@ -36,13 +36,14 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
   const [selectedRoot, setSelectedRoot] = useState<string>('D');
 
   // Pitch range: MIDI 36 (C2) to 84 (C6) = 48 notes
-  const minPitch = 36;
-  const maxPitch = 84;
+  const minPitch = 0;
+  const maxPitch = 512;
   const totalPitches = maxPitch - minPitch + 1;
 
+  const HEADER_HEIGHT = 32;
   const totalBeats = project.totalBars * 4;
   const pixelsPerBeat = 64; // width per beat in piano roll
-  const noteRowHeight = 20 * 1.1; // height per note pitch
+  const noteRowHeight = 30; // height per note pitch
 
   const activeTrack =
     project.tracks.find((t) => t.id === project.selectedTrackId) || project.tracks[0];
@@ -62,7 +63,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
     if (!gridRef.current || !activeTrack) return;
     const rect = gridRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left + gridRef.current.scrollLeft;
-    const clickY = e.clientY - rect.top + gridRef.current.scrollTop;
+    const clickY = (e.clientY - rect.top) + (gridRef.current.scrollTop - (noteRowHeight));
 
     // Calculate clicked pitch & beat
     const pitchIndex = Math.floor(clickY / noteRowHeight);
@@ -297,7 +298,10 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
         {/* Left Vertical Keyboard */}
         <div className="w-20 flex-shrink-0 bg-slate-900 border-r border-slate-800 z-10 sticky left-0">
           {/* Top ruler placeholder */}
-          <div className="h-5 border-b border-slate-800 bg-slate-950 px-2 flex items-center text-[6px] font-mono text-slate-500">
+          <div
+            className="border-b border-slate-800 bg-slate-950 px-2 flex items-center text-[32px] font-mono text-slate-500"
+            style={{ height: `${HEADER_HEIGHT}px` }}
+          >
             KEY
           </div>
           {/* Keys list descending from maxPitch to minPitch */}
@@ -310,7 +314,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
               <div
                 key={pitch}
                 onClick={() => handleKeyClick(pitch)}
-                className={`h-5 border-b border-slate-800/60 px-1.5 flex items-center justify-between text-[10px] font-mono cursor-pointer transition-colors ${isBlack
+                className={`border-b border-slate-800/60 px-1.5 flex items-center justify-between text-[6px] font-mono cursor-pointer transition-colors ${isBlack
                   ? 'bg-slate-950 hover:bg-slate-800 text-slate-400'
                   : 'bg-slate-850 hover:bg-slate-700 text-slate-200'
                   }`}
@@ -334,7 +338,10 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
           style={{ width: `${totalBeats * pixelsPerBeat}px` }}
         >
           {/* Top Bar/Beat Ruler */}
-          <div className="h-8 border-b border-slate-800 bg-slate-950 flex sticky top-0 z-20">
+          <div
+            className="border-b border-slate-800 bg-slate-950 flex sticky top-0 z-20 items-center"
+            style={{ height: `${HEADER_HEIGHT}px` }}
+          >
             {Array.from({ length: project.totalBars }).map((_, bIdx) => (
               <div
                 key={bIdx}
@@ -342,7 +349,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
                   e.stopPropagation();
                   onSeek(bIdx * 4);
                 }}
-                className="h-full border-r border-slate-800 flex items-center px-2 text-[11px] font-mono text-slate-400 cursor-pointer hover:bg-slate-900"
+                className="border-r border-slate-800 flex items-center px-2 text-[32px] font-mono text-slate-400 cursor-pointer hover:bg-slate-900"
                 style={{ width: `${pixelsPerBeat * 4}px` }}
               >
                 Bar {bIdx + 1}
@@ -352,8 +359,12 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
 
           {/* Scrubbing Playhead */}
           <div
-            className="absolute top-8 bottom-0 w-0.5 bg-cyan-400 shadow-[0_0_8px_rgba(56,189,248,0.9)] z-30 pointer-events-none"
-            style={{ left: `${currentBeat * pixelsPerBeat}px` }}
+            className="absolute w-0.5 bg-cyan-400 shadow-[0_0_8px_rgba(56,189,248,0.9)] z-30 pointer-events-none"
+            style={{
+              top: `${HEADER_HEIGHT}px`,
+              bottom: 0,
+              left: `${currentBeat * pixelsPerBeat}px`
+            }}
           />
 
           {/* Grid Rows for each pitch */}
@@ -364,7 +375,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
             return (
               <div
                 key={pitch}
-                className={`w-full border-b border-slate-800/40 relative flex ${isBlack ? 'bg-slate-950/90' : 'bg-slate-900/30'
+                className={`w-full border-b border-slate-800/40 relative flex flex-shrink-0 ${isBlack ? 'bg-slate-950/90' : 'bg-slate-900/30'
                   }`}
                 style={{ height: `${noteRowHeight}px` }}
               >
@@ -372,7 +383,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
                 {Array.from({ length: project.totalBars * 4 }).map((_, beatIdx) => (
                   <div
                     key={beatIdx}
-                    className={`h-full border-r ${beatIdx % 4 === 3 ? 'border-slate-800' : 'border-slate-850/60'
+                    className={`border-r ${beatIdx % 4 === 3 ? 'border-slate-800' : 'border-slate-850/60'
                       }`}
                     style={{ width: `${pixelsPerBeat}px` }}
                   />
@@ -395,7 +406,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
                 onClick={(e) => handleNoteClick(e, note.id)}
                 className="absolute rounded-sm px-1.5 flex items-center justify-between text-[10px] font-mono font-bold shadow-md cursor-pointer hover:brightness-110 z-10"
                 style={{
-                  top: `${top + 32}px`, // offset by ruler height (32px)
+                  top: `${top + HEADER_HEIGHT}px`, // offset by ruler height
                   left: `${left}px`,
                   width: `${width}px`,
                   height: `${noteRowHeight - 2}px`,
