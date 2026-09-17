@@ -15,6 +15,7 @@ import { ROOT_NOTES, MUSICAL_SCALES, getNoteName, getPitchColor } from '../audio
 import { synth } from '../audio/synthEngine';
 import { MidiMuseEngine } from '../audio/midiMuse';
 import { SonicRNGEngine } from '../audio/sonicRng';
+import { SeededRNG } from '../audio/seededRng';
 
 interface PianoRollViewProps {
   project: ProjectState;
@@ -149,7 +150,8 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
   // SonicRNG: Glitch fill injection
   const handleSonicRngGlitch = () => {
     if (!activeTrack) return;
-    const glitchNotes = SonicRNGEngine.rollGlitchFill(activeTrack.notes, Math.floor(currentBeat), 1.0);
+    const rng = new SeededRNG(Date.now());
+    const glitchNotes = SonicRNGEngine.rollGlitchFill(rng, activeTrack.notes, Math.floor(currentBeat), 1.0);
     onUpdateProject((prev) => ({
       ...prev,
       tracks: prev.tracks.map((t) =>

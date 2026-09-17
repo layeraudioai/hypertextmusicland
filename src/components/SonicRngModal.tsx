@@ -29,7 +29,8 @@ export const SonicRngModal: React.FC<SonicRngModalProps> = ({
 
   const handleRollPatch = () => {
     if (!activeTrack) return;
-    const newEffects = SonicRNGEngine.rollPatch(activeTrack.instrument, chaos);
+    const rng = new SeededRNG(Date.now());
+    const newEffects = SonicRNGEngine.rollPatch(rng, activeTrack.instrument, chaos);
 
     onUpdateProject((prev) => ({
       ...prev,
@@ -66,7 +67,8 @@ export const SonicRngModal: React.FC<SonicRngModalProps> = ({
 
   const handleRollGlitchFill = () => {
     if (!activeTrack) return;
-    const glitchNotes = SonicRNGEngine.rollGlitchFill(activeTrack.notes, 0, 2.0);
+    const rng = new SeededRNG(Date.now());
+    const glitchNotes = SonicRNGEngine.rollGlitchFill(rng, activeTrack.notes, 0, 2.0);
     onUpdateProject((prev) => ({
       ...prev,
       tracks: prev.tracks.map((t) =>
@@ -78,11 +80,12 @@ export const SonicRngModal: React.FC<SonicRngModalProps> = ({
   };
 
   const handleRadicalChaosAll = () => {
+    const rng = new SeededRNG(Date.now());
     onUpdateProject((prev) => ({
       ...prev,
       tracks: prev.tracks.map((t) => ({
         ...t,
-        effects: SonicRNGEngine.rollPatch(t.instrument, 1.0),
+        effects: SonicRNGEngine.rollPatch(rng, t.instrument, 1.0),
       })),
     }));
     setStatus('⚡ Radical Timbre Chaos applied across all project tracks!');
