@@ -44,7 +44,7 @@ export default function App() {
   const [isLayAiOpen, setIsLayAiOpen] = useState(false);
   const [isSonicRngOpen, setIsSonicRngOpen] = useState(false);
   const [isTransmuterOpen, setIsTransmuterOpen] = useState(false);
-  const [transmuterTab, setTransmuterTab] = useState<'audio-to-sf2' | 'audio-to-midi' | 'midi-sf2-to-audio' | 'midi-to-audio' | 'sf2-to-audio'>('audio-to-sf2');
+  const [transmuterTab, setTransmuterTab] = useState<'audio-to-sf2' | 'audio-to-midi' | 'midi-sf2-to-audio' | 'midi-to-audio' | 'sf2-to-audio' | 'audio-to-stems'>('audio-to-sf2');
 
   // Confirmation & Export Modals
   const [isClearProjectOpen, setIsClearProjectOpen] = useState(false);

@@ -496,3 +496,212 @@ export function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
 
   return new Blob([arrayBuffer], { type: 'audio/wav' });
 }
+
+export interface DynamicStemResult {
+  ensembleSize: number;
+  stems: { id: string; name: string; blob: Blob; panAngle: number; url: string }[];
+  multiChannelUrl?: string;
+}
+
+export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Promise<DynamicStemResult> {
+  const length = audioBuffer.length;
+  const sampleRate = audioBuffer.sampleRate;
+  
+  const left = new Float32Array(length);
+  const right = new Float32Array(length);
+
+  if (audioBuffer.numberOfChannels === 1) {
+    left.set(audioBuffer.getChannelData(0));
+    right.set(audioBuffer.getChannelData(0));
+  } else if (audioBuffer.numberOfChannels === 2) {
+    left.set(audioBuffer.getChannelData(0));
+    right.set(audioBuffer.getChannelData(1));
+  } else {
+    // Multi-channel downmix (c0=L, c1=R, c2=L_surround, etc.)
+    const channels = audioBuffer.numberOfChannels;
+    for (let c = 0; c < channels; c++) {
+      const channelData = audioBuffer.getChannelData(c);
+      const isEven = c % 2 === 0;
+      for (let i = 0; i < length; i++) {
+        if (isEven) left[i] += channelData[i] / Math.ceil(channels / 2);
+        else right[i] += channelData[i] / Math.floor(channels / 2);
+      }
+    }
+  }
+
+  // 1. Histogram of pan angles weighted by amplitude
+  const numBins = 100;
+  const histogram = new Float32Array(numBins);
+  
+  for (let i = 0; i < length; i++) {
+    const l = left[i];
+    const r = right[i];
+    const amp = Math.sqrt(l*l + r*r);
+    if (amp > 0.01) {
+      const angle = Math.atan2(Math.abs(r), Math.abs(l)); 
+      const bin = Math.floor((angle / (Math.PI / 2)) * numBins);
+      if (bin >= 0 && bin < numBins) {
+        histogram[bin] += amp;
+      }
+    }
+  }
+
+  // 2. Smooth histogram
+  const smoothed = new Float32Array(numBins);
+  for(let i=0; i<numBins; i++) {
+    let sum = 0;
+    let count = 0;
+    for(let j=-2; j<=2; j++) {
+      if (i+j >= 0 && i+j < numBins) {
+        sum += histogram[i+j];
+        count++;
+      }
+    }
+    smoothed[i] = sum / count;
+  }
+
+  // 3. Find peaks
+  const peaks: { bin: number; angle: number; energy: number }[] = [];
+  for (let i = 1; i < numBins - 1; i++) {
+    if (smoothed[i] > smoothed[i-1] && smoothed[i] > smoothed[i+1]) {
+      if (smoothed[i] > 10) {
+        peaks.push({
+          bin: i,
+          angle: (i / numBins) * (Math.PI / 2),
+          energy: smoothed[i]
+        });
+      }
+    }
+  }
+
+  peaks.sort((a,b) => b.energy - a.energy);
+  const maxEnergy = peaks[0]?.energy || 1;
+  // Can detect up to 256 stems for 256 channel format
+  const validPeaks = peaks.filter(p => p.energy > maxEnergy * 0.05).slice(0, 256);
+  validPeaks.sort((a,b) => a.angle - b.angle);
+
+  // If no peaks found (e.g., silence), fallback to Mid/Side
+  if (validPeaks.length === 0) {
+    validPeaks.push({ bin: 0, angle: 0, energy: maxEnergy }, { bin: 99, angle: Math.PI/2, energy: maxEnergy });
+  }
+
+  const multiChannelData: Float32Array[] = [];
+
+  // 4. Extract stems using phase mask
+  const stems = validPeaks.map((peak, idx) => {
+    // We must use `window.OfflineAudioContext` for ts compilation.
+    const actx = new window.OfflineAudioContext(2, length, sampleRate);
+    const buffer = actx.createBuffer(2, length, sampleRate);
+    const outL = buffer.getChannelData(0);
+    const outR = buffer.getChannelData(1);
+    
+    const monoTrack = new Float32Array(length);
+
+    const angleSpread = 0.25;
+
+    for (let i = 0; i < length; i++) {
+      const l = left[i];
+      const r = right[i];
+      const amp = Math.sqrt(l*l + r*r);
+      if (amp > 0.001) {
+        const angle = Math.atan2(Math.abs(r), Math.abs(l));
+        const diff = Math.abs(angle - peak.angle);
+        let mask = Math.max(0, 1 - diff / angleSpread);
+        mask = mask * mask; 
+        
+        outL[i] = l * mask;
+        outR[i] = r * mask;
+        monoTrack[i] = (outL[i] + outR[i]) / 2;
+      }
+    }
+    multiChannelData.push(monoTrack);
+
+    const blob = audioBufferToWavBlob(buffer);
+    
+    let name = "Center (Vocals/Bass)";
+    if (peak.angle < 0.3) name = "Left (Side)";
+    else if (peak.angle > 1.2) name = "Right (Side)";
+    else if (peak.angle > 0.3 && peak.angle < 0.7) name = "Mid-Left";
+    else if (peak.angle > 0.8 && peak.angle < 1.2) name = "Mid-Right";
+    name = `${name} (Pan: ${((peak.angle / (Math.PI/2)) * 100).toFixed(0)}%)`;
+
+    return {
+      id: `stem_${idx}`,
+      name: `Stem ${idx + 1}: ${name}`,
+      panAngle: peak.angle,
+      blob,
+      url: URL.createObjectURL(blob)
+    };
+  });
+
+  // Generate multi-channel wav if applicable
+  let multiChannelUrl: string | undefined;
+  if (stems.length > 0) {
+    try {
+      const multiWav = createMultiChannelWavBlob(multiChannelData, sampleRate);
+      multiChannelUrl = URL.createObjectURL(multiWav);
+    } catch(e) {
+      console.warn("Failed to generate multi-channel wav", e);
+    }
+  }
+
+  return {
+    ensembleSize: stems.length,
+    stems,
+    multiChannelUrl
+  };
+}
+
+export function createMultiChannelWavBlob(channelsData: Float32Array[], sampleRate: number): Blob {
+  const numChannels = channelsData.length;
+  if (numChannels === 0) throw new Error("No channels provided");
+  const length = channelsData[0].length;
+  const bytesPerSample = 2; // 16-bit PCM
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = length * blockAlign;
+
+  const headerSize = 44;
+  const totalSize = headerSize + dataSize;
+  const arrayBuffer = new ArrayBuffer(totalSize);
+  const view = new DataView(arrayBuffer);
+
+  function writeString(offset: number, string: string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  // RIFF Chunk
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+
+  // fmt Subchunk
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true); // Support up to 65535 channels natively
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+
+  // data Subchunk
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Interleave channel data
+  let offset = 44;
+  for (let i = 0; i < length; i++) {
+    for (let c = 0; c < numChannels; c++) {
+      let sample = channelsData[c][i];
+      sample = Math.max(-1, Math.min(1, sample));
+      const intSample = sample < 0 ? sample * 32768 : sample * 32767;
+      view.setInt16(offset, intSample, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([arrayBuffer], { type: 'audio/wav' });
+}
