@@ -52,11 +52,11 @@ def inline_assets(html_path):
     if js_files:
         inline_tags += "<script>\n" + "\n".join(js_files) + "\n</script>\n"
 
-    # Insert before </body> (case-insensitive)
+    # Insert after </body> (case-insensitive)
     if re.search(r'</body>', html, flags=re.IGNORECASE):
         html = re.sub(
             r'</body>',
-            lambda m: inline_tags + m.group(0),
+            lambda m: m.group(0) + inline_tags,
             html,
             flags=re.IGNORECASE
         )
