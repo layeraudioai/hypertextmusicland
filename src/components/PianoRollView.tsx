@@ -35,6 +35,11 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
   const [selectedScale, setSelectedScale] = useState<string>('Natural Minor');
   const [selectedRoot, setSelectedRoot] = useState<string>('D');
 
+  // Drag Interaction State
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [selectionBox, setSelectionBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+
   // Pitch range: MIDI 36 (C2) to 84 (C6) = 48 notes
   const minPitch = 0;
   const maxPitch = 512;
@@ -58,12 +63,12 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
     }
   };
 
-  // Add / Delete notes on grid click
-  const handleGridClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  // Add / Delete / Select notes on grid click
+  const handleGridMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!gridRef.current || !activeTrack) return;
     const rect = gridRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left + gridRef.current.scrollLeft;
-    const clickY = (e.clientY - rect.top) + (gridRef.current.scrollTop - (noteRowHeight));
+    const clickY = (e.clientY - rect.top) + (gridRef.current.scrollTop - HEADER_HEIGHT);
 
     // Calculate clicked pitch & beat
     const pitchIndex = Math.floor(clickY / noteRowHeight);
@@ -73,6 +78,9 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
 
     if (pitch < minPitch || pitch > maxPitch || snappedBeat >= totalBeats) return;
 
+    setIsDragging(true);
+    setDragStart({ x: clickX, y: clickY });
+
     if (tool === 'draw') {
       // Add note
       const newNote: Note = {
@@ -81,19 +89,64 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
         time: Number(snappedBeat.toFixed(3)),
         duration: snapValue * 2, // default length
         velocity: 0.85,
+        selected: true,
       };
-
-      // Preview sound immediately
-      synth.triggerLiveNoteOn(activeTrack, pitch, 0.85);
-      setTimeout(() => synth.triggerLiveNoteOff(activeTrack, pitch), 200);
 
       onUpdateProject((prev) => ({
         ...prev,
         tracks: prev.tracks.map((t) =>
-          t.id === activeTrack.id ? { ...t, notes: [...t.notes, newNote] } : t
+          t.id === activeTrack.id ? { ...t, notes: [...t.notes.map(n => ({...n, selected: false})), newNote] } : t
+        ),
+      }));
+    } else if (tool === 'select') {
+      // Clear selection
+      onUpdateProject((prev) => ({
+        ...prev,
+        tracks: prev.tracks.map((t) =>
+          t.id === activeTrack.id ? { ...t, notes: t.notes.map(n => ({ ...n, selected: false })) } : t
         ),
       }));
     }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDragging || !gridRef.current) return;
+    
+    const rect = gridRef.current.getBoundingClientRect();
+    const currentX = e.clientX - rect.left + gridRef.current.scrollLeft;
+    const currentY = (e.clientY - rect.top) + (gridRef.current.scrollTop - HEADER_HEIGHT);
+    
+    if (tool === 'select') {
+      setSelectionBox({
+        x1: Math.min(dragStart!.x, currentX),
+        y1: Math.min(dragStart!.y, currentY),
+        x2: Math.max(dragStart!.x, currentX),
+        y2: Math.max(dragStart!.y, currentY),
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (tool === 'select' && selectionBox) {
+      // Finalize selection based on box
+      onUpdateProject((prev) => ({
+        ...prev,
+        tracks: prev.tracks.map((t) =>
+          t.id === activeTrack?.id ? {
+            ...t,
+            notes: t.notes.map(n => ({
+              ...n,
+              selected: (n.time * pixelsPerBeat >= selectionBox.x1 && 
+                         n.time * pixelsPerBeat <= selectionBox.x2 &&
+                         (maxPitch - n.pitch) * noteRowHeight >= selectionBox.y1 &&
+                         (maxPitch - n.pitch) * noteRowHeight <= selectionBox.y2)
+            }))
+          } : t
+        ),
+      }));
+    }
+    setIsDragging(false);
+    setSelectionBox(null);
   };
 
   const handleNoteClick = (e: React.MouseEvent, noteId: string) => {
@@ -333,10 +386,26 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
         {/* Grid Canvas */}
         <div
           ref={gridRef}
-          onClick={handleGridClick}
+          onMouseDown={handleGridMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
           className="flex-1 flex flex-col relative cursor-crosshair"
           style={{ width: `${totalBeats * pixelsPerBeat}px` }}
         >
+          {/* Selection Box */}
+          {selectionBox && (
+            <div
+              className="absolute bg-sky-500/20 border border-sky-500 z-40"
+              style={{
+                left: `${selectionBox.x1}px`,
+                top: `${selectionBox.y1 + HEADER_HEIGHT}px`,
+                width: `${selectionBox.x2 - selectionBox.x1}px`,
+                height: `${selectionBox.y2 - selectionBox.y1}px`,
+              }}
+            />
+          )}
+
           {/* Top Bar/Beat Ruler */}
           <div
             className="border-b border-slate-800 bg-slate-950 flex sticky top-0 z-20 items-center"
@@ -404,7 +473,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
               <div
                 key={note.id}
                 onClick={(e) => handleNoteClick(e, note.id)}
-                className="absolute rounded-sm px-1.5 flex items-center justify-between text-[10px] font-mono font-bold shadow-md cursor-pointer hover:brightness-110 z-10"
+                className={`absolute rounded-sm px-1.5 flex items-center justify-between text-[10px] font-mono font-bold shadow-md cursor-pointer hover:brightness-110 z-10 ${note.selected ? 'ring-2 ring-white' : ''}`}
                 style={{
                   top: `${top + HEADER_HEIGHT}px`, // offset by ruler height
                   left: `${left}px`,
