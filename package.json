@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "build:aio": "npm run build && tsx scripts/inline.ts",
+    "build:aio": "npm install jsx && npm run build && cd scripts && python inline.py",
     "start": "node dist/server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -25,6 +25,7 @@
     "express": "^5.2.1",
     "install": "^0.13.0",
     "jest": "^30.5.1",
+    "jsx": "^0.9.89",
     "jszip": "^3.10.1",
     "lamejs": "^1.2.1",
     "lucide-react": "^0.546.0",

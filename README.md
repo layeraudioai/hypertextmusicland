@@ -6,4 +6,6 @@ https://hypertextmusicland.66ghz.com/
 --
 to build:
 -
+0th: install python and node.js
 1st: double click aio.bat
+
