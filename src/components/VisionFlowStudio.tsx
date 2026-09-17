@@ -36,7 +36,20 @@ export const VisionFlowStudio: React.FC<VisionFlowStudioProps> = ({
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
 
-  const config = project.visionFlow;
+  const defaultConfig: VisionFlowConfig = {
+    theme: 'neon-aura',
+    bloom: 0.85,
+    reactivity: 1.4,
+    flowSpeed: 1.0,
+    particleCount: 180,
+    showPianoWaterfall: true,
+    showWaveform: true,
+    showSpectrogram: true,
+    showTextOverlay: true,
+    titleText: 'AURAVISION HYBRID • 124 BPM',
+    aspectRatio: '16:9',
+  };
+  const config: VisionFlowConfig = { ...defaultConfig, ...(project.visionFlow || {}) };
 
   // Initialize renderer loop
   useEffect(() => {
@@ -320,14 +333,14 @@ export const VisionFlowStudio: React.FC<VisionFlowStudioProps> = ({
           <div>
             <div className="flex justify-between text-slate-400 font-mono mb-1">
               <span>Audio Reactivity:</span>
-              <span>{config.reactivity.toFixed(1)}x</span>
+              <span>{(config.reactivity ?? 1.4).toFixed(1)}x</span>
             </div>
             <input
               type="range"
               min="0.5"
               max="3.0"
               step="0.1"
-              value={config.reactivity}
+              value={config.reactivity ?? 1.4}
               onChange={(e) =>
                 onUpdateProject((prev) => ({
                   ...prev,
@@ -341,14 +354,14 @@ export const VisionFlowStudio: React.FC<VisionFlowStudioProps> = ({
           <div>
             <div className="flex justify-between text-slate-400 font-mono mb-1">
               <span>Flow Speed:</span>
-              <span>{config.flowSpeed.toFixed(1)}x</span>
+              <span>{(config.flowSpeed ?? 1.0).toFixed(1)}x</span>
             </div>
             <input
               type="range"
               min="0.2"
               max="2.5"
               step="0.1"
-              value={config.flowSpeed}
+              value={config.flowSpeed ?? 1.0}
               onChange={(e) =>
                 onUpdateProject((prev) => ({
                   ...prev,

@@ -20,14 +20,16 @@ import {
   Trash2,
   FolderArchive,
   GitBranch,
+  Settings,
+  Flame,
 } from 'lucide-react';
 import { ProjectState } from '../types/daw';
 
 interface HeaderProps {
   project: ProjectState;
   onUpdateProject: (updater: (prev: ProjectState) => ProjectState) => void;
-  activeView: 'timeline' | 'pianoroll' | 'video' | 'mixer';
-  setActiveView: (view: 'timeline' | 'pianoroll' | 'video' | 'mixer') => void;
+  activeView: 'timeline' | 'pianoroll' | 'video' | 'mixer' | 'settings';
+  setActiveView: (view: 'timeline' | 'pianoroll' | 'video' | 'mixer' | 'settings') => void;
   onOpenLayAi: () => void;
   onOpenSonicRng: () => void;
   onOpenAudioTransmuter: (tab?: 'audio-to-sf2' | 'audio-to-midi' | 'midi-sf2-to-audio' | 'midi-to-audio' | 'sf2-to-audio') => void;
@@ -153,6 +155,19 @@ export const Header: React.FC<HeaderProps> = ({
             <Sliders className="w-3.5 h-3.5" />
             <span>Mixer</span>
           </button>
+          <button
+            id="view-tab-settings"
+            onClick={() => setActiveView('settings')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${
+              activeView === 'settings'
+                ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 font-bold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Settings & LayAI Fire Away Benchmarking Optimization"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span>Settings</span>
+          </button>
         </div>
 
         {/* Generative & Creative AI Modules */}
@@ -185,6 +200,16 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Upload className="w-3.5 h-3.5 text-sky-400" />
             <span>Audio / SF2 / MIDI</span>
+          </button>
+
+          <button
+            id="btn-quick-fire-away"
+            onClick={() => setActiveView('settings')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 border border-amber-500/40 shadow-sm transition-all cursor-pointer"
+            title="LayAI: Benchmarking Metrics, Fidelity Tuning & Fire Away Auto-Optimization"
+          >
+            <Flame className="w-3.5 h-3.5 text-amber-400 fill-current" />
+            <span>Fire Away</span>
           </button>
         </div>
 

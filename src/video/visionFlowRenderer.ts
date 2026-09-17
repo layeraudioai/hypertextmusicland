@@ -21,6 +21,16 @@ export class VisionFlowRenderer {
   private particles: Particle[] = [];
   private time: number = 0;
 
+  // Dynamic Performance & Telemetry (LayAI inspired)
+  private resolutionScale: number = 1.0;
+  private targetFps: number = 60;
+  private particleDensityMultiplier: number = 1.0;
+  private lastFrameTimestamp: number = 0;
+  private fpsHistory: number[] = [];
+  private currentFps: number = 60;
+  private currentFrameTimeMs: number = 16.6;
+  private droppedFrameCount: number = 0;
+
   // MediaRecorder for video.2kool4u.net video export
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
@@ -37,6 +47,30 @@ export class VisionFlowRenderer {
     this.analyser = analyser;
   }
 
+  public setResolutionScale(scale: number) {
+    this.resolutionScale = Math.max(0.25, Math.min(2.0, scale));
+  }
+
+  public setTargetFps(fps: number) {
+    this.targetFps = fps;
+  }
+
+  public setParticleDensityMultiplier(mult: number) {
+    this.particleDensityMultiplier = Math.max(0.1, Math.min(3.0, mult));
+  }
+
+  public getMetrics() {
+    return {
+      fps: this.currentFps,
+      frameTimeMs: parseFloat(this.currentFrameTimeMs.toFixed(1)),
+      droppedFrames: this.droppedFrameCount,
+      resolutionScale: this.resolutionScale,
+      targetFps: this.targetFps,
+      particleDensityMultiplier: this.particleDensityMultiplier,
+      activeParticles: this.particles.length,
+    };
+  }
+
   public startRenderLoop(
     getConfig: () => VisionFlowConfig,
     getCurrentBeat: () => number,
@@ -45,9 +79,27 @@ export class VisionFlowRenderer {
   ) {
     if (this.animationId !== null) return;
 
-    const render = () => {
+    const render = (now: number) => {
       this.animationId = requestAnimationFrame(render);
       if (!this.canvas || !this.ctx) return;
+
+      if (this.targetFps > 0 && this.targetFps < 120) {
+        const interval = 1000 / this.targetFps;
+        if (now - this.lastFrameTimestamp < interval - 2) {
+          return;
+        }
+      }
+
+      const delta = now - this.lastFrameTimestamp;
+      this.lastFrameTimestamp = now;
+      if (delta > 0 && delta < 500) {
+        const instantFps = 1000 / delta;
+        this.currentFrameTimeMs = delta;
+        this.fpsHistory.push(instantFps);
+        if (this.fpsHistory.length > 30) this.fpsHistory.shift();
+        this.currentFps = Math.round(this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length);
+        if (delta > 35) this.droppedFrameCount++;
+      }
 
       const config = getConfig();
       const beat = getCurrentBeat();
@@ -57,7 +109,7 @@ export class VisionFlowRenderer {
       this.renderFrame(config, beat, tracks, isPlaying);
     };
 
-    render();
+    render(performance.now());
   }
 
   public stopRenderLoop() {
@@ -198,7 +250,8 @@ export class VisionFlowRenderer {
     }
 
     // Particle emissions
-    if (this.particles.length < config.particleCount) {
+    const maxParticles = Math.round(config.particleCount * this.particleDensityMultiplier);
+    if (this.particles.length < maxParticles) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 1.5 + Math.random() * 4 + bass * 5;
       this.particles.push({

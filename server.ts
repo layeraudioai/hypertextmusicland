@@ -17,6 +17,65 @@ async function startServer() {
     res.json({ status: 'ok', service: 'AuraVision DAW Hybrid Engine' });
   });
 
+  // LayAI Optimization Genome & Benchmarking Telemetry API
+  let bestGlobalGenome: any = {
+    concurrency: 4,
+    chunkSize: 4096,
+    midiSampleRate: 44100,
+    midiDenseSampleRate: 32000,
+    fftSize: 1024,
+    hopSize: 512,
+    yieldInterval: 150,
+    visualResolutionScale: 1.0,
+    visualFpsTarget: 60,
+    particleDensity: 'high',
+    audioQuality: 'high',
+    polyphonyLimit: 64,
+    adaptiveQuality: true,
+    fitness: 8420,
+    fitnessMix: 8650,
+    fitnessRender: 8210,
+    fitnessVisual: 8400,
+    fitnessAnalysis: 8420,
+    timestamp: Date.now(),
+    device: 'Server Baseline Reference (Multi-core DSP)'
+  };
+  const optimizationHistory: any[] = [];
+
+  app.get('/api/optimization', (req, res) => {
+    res.json({
+      success: true,
+      bestGenome: bestGlobalGenome,
+      totalSubmissions: optimizationHistory.length
+    });
+  });
+
+  app.post('/api/optimization', (req, res) => {
+    try {
+      const candidate = req.body;
+      if (!candidate || typeof candidate !== 'object') {
+        return res.status(400).json({ success: false, error: 'Invalid payload' });
+      }
+      optimizationHistory.push({ ...candidate, receivedAt: Date.now() });
+      if (optimizationHistory.length > 100) optimizationHistory.shift();
+
+      let isNewRecord = false;
+      if (candidate.fitness && candidate.fitness > bestGlobalGenome.fitness) {
+        bestGlobalGenome = { ...candidate, timestamp: Date.now() };
+        isNewRecord = true;
+      }
+
+      res.json({
+        success: true,
+        isNewRecord,
+        bestFitness: bestGlobalGenome.fitness,
+        message: isNewRecord ? 'New global optimization record established!' : 'Optimization logged successfully'
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Git Repository & Sync APIs
   app.get('/api/git/status', (req, res) => {
     try {

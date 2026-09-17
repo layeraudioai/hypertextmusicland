@@ -26,13 +26,68 @@ import {
   audioBufferToWavBlob,
   detectAndSplitStemsDynamic,
   DynamicStemResult,
+  StemTrackData,
   sampleManager,
   PitchDetectionResult,
 } from '../audio/audioProcessor';
 import { synth } from '../audio/synthEngine';
 import { exportToMidiFile } from '../audio/midiParser';
 import { generateSf2Binary } from '../audio/sf2Generator';
-import { ROOT_NOTES, SOUNDFONT_PRESETS, getNoteName, getPitchColor } from '../audio/constants';
+import { ROOT_NOTES, SOUNDFONT_PRESETS, getNoteName, getPitchColor, DEFAULT_TRACK_EFFECTS } from '../audio/constants';
+
+// Stem Waveform Visualizer
+function StemWaveform({ buffer, color = '#38bdf8' }: { buffer?: AudioBuffer; color?: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!buffer || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+    const data = buffer.getChannelData(0);
+    const step = Math.ceil(data.length / width);
+    const amp = height / 2;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, amp);
+    ctx.lineTo(width, amp);
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    for (let i = 0; i < width; i++) {
+      let min = 1.0;
+      let max = -1.0;
+      for (let j = 0; j < step; j++) {
+        const datum = data[i * step + j];
+        if (datum < min) min = datum;
+        if (datum > max) max = datum;
+      }
+      if (min > max) {
+        min = -0.05;
+        max = 0.05;
+      }
+      ctx.fillRect(i, (1 + min) * amp, 1, Math.max(2, (max - min) * amp));
+    }
+  }, [buffer, color]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={400}
+      height={48}
+      className="w-full h-12 rounded bg-slate-950 border border-slate-800/80"
+    />
+  );
+}
 
 // Musical Showcase Sequences for auditioning SoundFonts
 const PRESET_PATTERNS: Record<
@@ -165,6 +220,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
   // Audio to Stems State
   const [detectedStems, setDetectedStems] = useState<DynamicStemResult | null>(null);
   const [isSplittingStems, setIsSplittingStems] = useState(false);
+  const [stemMode, setStemMode] = useState<'4-stem' | '2-stem' | 'spatial'>('4-stem');
 
   // Success notifications
   const [notification, setNotification] = useState<string | null>(null);
@@ -474,18 +530,19 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
     );
   };
 
-  const handleAddStemToDaw = (stem: { id: string; name: string; url: string }) => {
+  const handleAddStemToDaw = (stem: StemTrackData) => {
     if (!audioBuffer) return;
-    const beats = (audioBuffer.duration * project.bpm) / 60;
+    const stemBuf = stem.buffer || audioBuffer;
+    const beats = (stemBuf.duration * project.bpm) / 60;
     const requiredBars = Math.max(1, Math.ceil(beats / 4));
 
     const newTrack: Track = {
       id: `track-stem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       name: stem.name,
       instrument: 'synth_lead',
-      color: '#6366f1',
+      color: stem.color || '#6366f1',
       volume: 0.85,
-      pan: 0,
+      pan: stem.category === 'drums' ? 0 : stem.category === 'bass' ? 0 : stem.category === 'vocals' ? 0 : 0.15,
       muted: false,
       solo: false,
       armed: false,
@@ -495,7 +552,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
         name: stem.name,
         url: stem.url,
         duration: beats,
-        buffer: audioBuffer,
+        buffer: stemBuf,
       },
       effects: {
         cutoff: 12000,
@@ -525,16 +582,26 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
 
   const handleAddAllStemsToDaw = () => {
     if (!detectedStems || detectedStems.stems.length === 0 || !audioBuffer) return;
-    const beats = (audioBuffer.duration * project.bpm) / 60;
+    const stemBuf = detectedStems.stems[0].buffer || audioBuffer;
+    const beats = (stemBuf.duration * project.bpm) / 60;
     const requiredBars = Math.max(1, Math.ceil(beats / 4));
 
     const newTracks: Track[] = detectedStems.stems.map((stem, idx) => ({
       id: `track-stem-${Date.now()}-${idx}`,
       name: stem.name,
       instrument: 'synth_lead',
-      color: ['#6366f1', '#a855f7', '#ec4899', '#3b82f6', '#10b981'][idx % 5],
+      color: stem.color || ['#f97316', '#a855f7', '#06b6d4', '#10b981', '#f59e0b'][idx % 5],
       volume: 0.85,
-      pan: idx === 0 ? 0 : idx % 2 === 1 ? -0.3 : 0.3,
+      pan:
+        stem.category === 'drums'
+          ? 0
+          : stem.category === 'bass'
+          ? 0
+          : stem.category === 'vocals'
+          ? 0
+          : idx % 2 === 1
+          ? -0.25
+          : 0.25,
       muted: false,
       solo: false,
       armed: false,
@@ -544,7 +611,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
         name: stem.name,
         url: stem.url,
         duration: beats,
-        buffer: audioBuffer,
+        buffer: stem.buffer || audioBuffer,
       },
       effects: {
         cutoff: 12000,
@@ -644,7 +711,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
       solo: false,
       armed: false,
       notes: transcribedNotes,
-      effects: {} as any,
+      effects: { ...DEFAULT_TRACK_EFFECTS },
     };
 
     const midiBytes = exportToMidiFile([trackForMidi], project.bpm, 'Transcribed Audio');
@@ -801,9 +868,9 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
 
     setIsSplittingStems(true);
     try {
-      const result = await detectAndSplitStemsDynamic(audioBuffer);
+      const result = await detectAndSplitStemsDynamic(audioBuffer, stemMode);
       setDetectedStems(result);
-      setNotification(`✓ Detected ensemble size of ${result.ensembleSize} and generated stems!`);
+      setNotification(`✓ Extracted ${result.stems.length} stems via ${result.mode.toUpperCase()} separation!`);
     } catch (err: any) {
       console.error(err);
       alert('Error splitting stems: ' + err.message);
@@ -1003,7 +1070,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                         <span>{isPlayingAudio ? 'Pause' : 'Audition'}</span>
                       </button>
                       <span>
-                        {audioBuffer.duration.toFixed(2)}s • {audioBuffer.sampleRate}Hz •{' '}
+                        {(audioBuffer?.duration ?? 0).toFixed(2)}s • {audioBuffer.sampleRate}Hz •{' '}
                         {audioBuffer.numberOfChannels === 1 ? 'Mono' : 'Stereo'}
                       </span>
                     </div>
@@ -1020,8 +1087,8 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
 
                   {/* Audio Bar Count & Length Telemetry */}
                   {(() => {
-                    const durationSec = audioBuffer.duration;
-                    const beats = (durationSec * project.bpm) / 60;
+                    const durationSec = audioBuffer?.duration ?? 0;
+                    const beats = (durationSec * (project.bpm || 120)) / 60;
                     const requiredBars = Math.max(1, Math.ceil(beats / 4));
                     return (
                       <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -1327,7 +1394,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                         📦 Stem: {sf2InstrumentName || audioFile?.name}
                       </span>
                       <span className="px-2 py-0.5 rounded bg-slate-900/80 border border-slate-800 text-[10px] font-mono text-amber-300">
-                        ⏱️ {audioBuffer.duration.toFixed(2)}s Sample
+                        ⏱️ {(audioBuffer?.duration ?? 0).toFixed(2)}s Sample
                       </span>
                     </div>
                   </div>
@@ -1451,7 +1518,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                         <div className="flex items-center justify-between text-slate-400">
                           <span>Length:</span>
                           <span className="font-mono text-slate-200">
-                            {maxBeat.toFixed(1)} beats (~{Math.ceil(maxBeat / 4)} bars)
+                            {(maxBeat || 0).toFixed(1)} beats (~{Math.ceil((maxBeat || 0) / 4)} bars)
                           </span>
                         </div>
                         {midiSource === 'uploaded_transcribed' && notes.length === 0 && audioBuffer && (
@@ -1593,14 +1660,14 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                   <div className="flex flex-col gap-1">
                     <div className="flex justify-between text-[11px]">
                       <span className="text-slate-400">Resonance (Q):</span>
-                      <span className="font-mono text-sky-400 font-bold">{resonance.toFixed(1)}</span>
+                      <span className="font-mono text-sky-400 font-bold">{(resonance ?? 1.0).toFixed(1)}</span>
                     </div>
                     <input
                       type="range"
                       min={0.5}
                       max={8.0}
                       step={0.1}
-                      value={resonance}
+                      value={resonance ?? 1.0}
                       onChange={(e) => setResonance(Number(e.target.value))}
                       className="accent-sky-500 cursor-pointer h-2 bg-slate-900 rounded-lg mt-1"
                     />
@@ -1689,28 +1756,95 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
           {/* TAB 4: AUDIO TO STEMS */}
           {activeTab === 'audio-to-stems' && (
             <div className="flex flex-col gap-4">
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col gap-3">
-                <div className="flex items-center justify-between">
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col gap-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <h3 className="font-bold text-slate-200 text-xs uppercase tracking-wider flex items-center gap-2">
                     <Sliders className="w-4 h-4 text-indigo-400" />
-                    <span>AI STEM Separation (Phase Cancellation)</span>
+                    <span>Studio STEM Separation (Frequency Crossover & Phase Isolation)</span>
                   </h3>
+                  <span className="text-[10px] text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-full font-mono">
+                    High-Fidelity Offline Audio Engine
+                  </span>
                 </div>
-                <p className="text-[11px] text-slate-400">
-                  Extract center channel (Vocals, Kick, Bass) and side channel (Wide Instruments) via mathematical phase addition/subtraction. Automatically handles mono, stereo, and multi-channel audio.
+
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Isolate audio into distinct, uncompressed stereo tracks with accurate transient retention, bass filtering, and center-vocal formant extraction. Stems can be auditioned immediately or inserted directly into the DAW timeline as playable synchronized audio tracks.
                 </p>
 
-                <div className="flex items-center gap-3 mt-2">
+                {/* Separation Mode Selector */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[11px] font-semibold text-slate-300">Separation Algorithm Mode:</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStemMode('4-stem')}
+                      className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col gap-1 ${
+                        stemMode === '4-stem'
+                          ? 'bg-indigo-950/60 border-indigo-500 text-indigo-100 shadow-md shadow-indigo-500/10'
+                          : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs">4-Stem Studio</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-900/80 text-indigo-300 font-mono">Pro</span>
+                      </div>
+                      <span className="text-[10px] opacity-80">
+                        Drums, Bass/Sub, Vocals/Lead & Instruments/Atmosphere.
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setStemMode('2-stem')}
+                      className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col gap-1 ${
+                        stemMode === '2-stem'
+                          ? 'bg-indigo-950/60 border-indigo-500 text-indigo-100 shadow-md shadow-indigo-500/10'
+                          : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs">2-Stem Acapella / Karaoke</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900/80 text-cyan-300 font-mono">Vocal</span>
+                      </div>
+                      <span className="text-[10px] opacity-80">
+                        Isolated Lead Vocals & Instrumental Backing mix.
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setStemMode('spatial')}
+                      className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col gap-1 ${
+                        stemMode === 'spatial'
+                          ? 'bg-indigo-950/60 border-indigo-500 text-indigo-100 shadow-md shadow-indigo-500/10'
+                          : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs">Spatial Pan Ensemble</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-fuchsia-900/80 text-fuchsia-300 font-mono">Surround</span>
+                      </div>
+                      <span className="text-[10px] opacity-80">
+                        Angular pan-histogram multi-channel stem separation.
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-1">
                   <button
                     onClick={handleSplitStems}
                     disabled={isSplittingStems || !audioBuffer}
-                    className="px-5 py-3 rounded-xl font-bold bg-indigo-500 hover:bg-indigo-400 text-slate-950 flex items-center gap-2 shadow-lg shadow-indigo-500/20 disabled:opacity-50 transition-all cursor-pointer text-xs"
+                    className="px-5 py-2.5 rounded-xl font-bold bg-indigo-500 hover:bg-indigo-400 text-slate-950 flex items-center gap-2 shadow-lg shadow-indigo-500/20 disabled:opacity-50 transition-all cursor-pointer text-xs"
                   >
                     <RefreshCw className={`w-4 h-4 ${isSplittingStems ? 'animate-spin' : ''}`} />
                     <span>
-                      {isSplittingStems ? 'Processing Stems...' : '⚡ Split to Stems'}
+                      {isSplittingStems ? 'Analyzing & Separating Audio Stems...' : '⚡ Split to Stems'}
                     </span>
                   </button>
+                  {!audioBuffer && (
+                    <span className="text-xs text-amber-400">Please upload an audio file first.</span>
+                  )}
                 </div>
 
                 {detectedStems && (
@@ -1719,7 +1853,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                       <div className="flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-emerald-400" />
                         <span className="font-bold text-slate-200 text-xs">
-                          Dynamically Detected Ensemble Size: <span className="text-emerald-400">{detectedStems.ensembleSize} instruments</span>
+                          Separated Stems ({detectedStems.stems.length} channels ready)
                         </span>
                       </div>
                       <button
@@ -1731,44 +1865,66 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                         <span>Add All Stems to DAW (Auto-fits Bars)</span>
                       </button>
                     </div>
+
                     {detectedStems.multiChannelUrl && (
-                      <div className="p-4 rounded-xl border border-fuchsia-500/50 bg-slate-900 flex flex-col gap-2 shadow-xl mb-2">
-                        <div className="flex items-center gap-2">
-                          <Layers className="w-4 h-4 text-fuchsia-400" />
-                          <span className="font-bold text-slate-200 text-xs">Full Multi-Channel Stem Package (Up to 256ch)</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400">
-                          Export all stems interleaved into a single multi-channel spatial WAV file (supports 8ch/7.1, 24ch/22.2, 32ch, up to 256ch for WavPack/WAV workflows).
-                        </p>
-                        <a href={detectedStems.multiChannelUrl} download={`stems_multichannel_${detectedStems.ensembleSize}ch.wav`} className="px-4 py-2 mt-1 rounded-xl bg-fuchsia-500 hover:bg-fuchsia-400 text-slate-950 font-bold flex items-center gap-1.5 transition-colors cursor-pointer text-xs w-fit">
-                          <Download className="w-4 h-4" /> Download Multi-Channel Spatial WAV
-                        </a>
-                      </div>
-                    )}
-                    {detectedStems.stems.map((stem, index) => (
-                      <div key={stem.id} className="p-4 rounded-xl border border-indigo-500/50 bg-slate-900 flex flex-col gap-2 shadow-xl">
-                        <div className="flex items-center justify-between">
+                      <div className="p-3.5 rounded-xl border border-fuchsia-500/40 bg-slate-900/90 flex flex-col gap-2 shadow-lg">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
                           <div className="flex items-center gap-2">
-                            <FileAudio className="w-4 h-4 text-indigo-400" />
-                            <span className="font-bold text-slate-200 text-xs">{stem.name}</span>
+                            <Layers className="w-4 h-4 text-fuchsia-400" />
+                            <span className="font-bold text-slate-200 text-xs">Full Multi-Channel Stem Package (Surround / WavPack)</span>
                           </div>
-                          <button
-                            onClick={() => handleAddStemToDaw(stem)}
-                            className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-bold flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
-                            title="Add this single stem as a DAW track"
+                          <a
+                            href={detectedStems.multiChannelUrl}
+                            download={`stems_multichannel_${detectedStems.ensembleSize}ch.wav`}
+                            className="px-3 py-1.5 rounded-lg bg-fuchsia-500 hover:bg-fuchsia-400 text-slate-950 font-bold flex items-center gap-1.5 transition-colors cursor-pointer text-xs"
                           >
-                            <Plus className="w-3 h-3" />
-                            <span>+ Add to DAW Track</span>
-                          </button>
-                        </div>
-                        <audio src={stem.url} controls className="w-full h-10 rounded-lg" />
-                        <div className="flex gap-3">
-                          <a href={stem.url} download={`${stem.id}.wav`} className="px-4 py-2 mt-1 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-slate-950 font-bold flex items-center gap-1.5 transition-colors cursor-pointer text-xs">
-                            <Download className="w-4 h-4" /> Download Stem {index + 1}
+                            <Download className="w-3.5 h-3.5" /> Download Multi-Channel WAV
                           </a>
                         </div>
                       </div>
-                    ))}
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {detectedStems.stems.map((stem, index) => (
+                        <div
+                          key={stem.id}
+                          className="p-3.5 rounded-xl border border-slate-800 bg-slate-900 flex flex-col gap-2.5 shadow-md transition-all hover:border-slate-700"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-3 h-3 rounded-full"
+                                style={{ backgroundColor: stem.color || '#6366f1' }}
+                              />
+                              <span className="font-bold text-slate-200 text-xs">{stem.name}</span>
+                            </div>
+                            <button
+                              onClick={() => handleAddStemToDaw(stem)}
+                              className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-bold flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
+                              title="Add this single stem as a DAW track"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Add to DAW</span>
+                            </button>
+                          </div>
+
+                          {/* Mini Waveform Visualization */}
+                          <StemWaveform buffer={stem.buffer} color={stem.color || '#38bdf8'} />
+
+                          <audio src={stem.url} controls className="w-full h-8 rounded-lg" />
+
+                          <div className="flex justify-end pt-1">
+                            <a
+                              href={stem.url}
+                              download={`${stem.id}.wav`}
+                              className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-[11px]"
+                            >
+                              <Download className="w-3 h-3" /> Download Stem WAV
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

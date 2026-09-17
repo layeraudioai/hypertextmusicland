@@ -117,7 +117,7 @@ export const MixerPanel: React.FC<MixerPanelProps> = ({
 
               {/* Decibel Label */}
               <div className="text-center font-mono text-[11px] text-slate-400 my-1">
-                {track.volume === 0 ? '-inf dB' : `${(20 * Math.log10(track.volume)).toFixed(1)} dB`}
+                {(track.volume ?? 0.85) <= 0.0001 ? '-inf dB' : `${(20 * Math.log10(track.volume ?? 0.85)).toFixed(1)} dB`}
               </div>
 
               {/* Mute / Solo Buttons */}
@@ -220,9 +220,9 @@ export const MixerPanel: React.FC<MixerPanelProps> = ({
           </div>
 
           <div className="text-center font-mono text-xs font-bold text-sky-400 my-1">
-            {project.masterVolume === 0
+            {(project.masterVolume ?? 0.9) <= 0.0001
               ? '-inf dB'
-              : `${(20 * Math.log10(project.masterVolume)).toFixed(1)} dB`}
+              : `${(20 * Math.log10(project.masterVolume ?? 0.9)).toFixed(1)} dB`}
           </div>
 
           <div className="p-1 rounded bg-slate-950 text-center font-mono text-[10px] text-slate-400 border border-slate-800">

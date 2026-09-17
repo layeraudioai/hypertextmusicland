@@ -19,6 +19,8 @@ import { VirtualKeyboard } from './components/VirtualKeyboard';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { FullSaveZipModal } from './components/FullSaveZipModal';
 import { GitHubSyncModal } from './components/GitHubSyncModal';
+import { SettingsPage } from './components/SettingsPage';
+import { loadPerformanceGenome, applyGenomeToEngine } from './utils/performanceOptimizer';
 
 export default function App() {
   const [project, setProject] = useState<ProjectState>(() => {
@@ -26,13 +28,53 @@ export default function App() {
     const saved = localStorage.getItem('auravision_project');
     if (saved) {
       try {
-        return JSON.parse(saved);
-      } catch (e) {}
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.tracks)) {
+          const defaultProj = createDefaultProject();
+          return {
+            ...defaultProj,
+            ...parsed,
+            visionFlow: {
+              ...defaultProj.visionFlow,
+              ...(parsed.visionFlow || {}),
+            },
+            tracks: parsed.tracks.map((t: any) => ({
+              ...t,
+              volume: typeof t.volume === 'number' ? t.volume : 0.85,
+              pan: typeof t.pan === 'number' ? t.pan : 0,
+              effects: {
+                ...DEFAULT_TRACK_EFFECTS,
+                ...(t.effects || {}),
+              },
+              audioStem: t.audioStem
+                ? {
+                    ...t.audioStem,
+                    duration: typeof t.audioStem.duration === 'number' ? t.audioStem.duration : 0,
+                    // If buffer is not a real AudioBuffer instance (e.g. from JSON), clear it to avoid crash
+                    buffer: t.audioStem.buffer && typeof t.audioStem.buffer.duration === 'number' ? t.audioStem.buffer : undefined,
+                  }
+                : undefined,
+            })),
+          };
+        }
+      } catch (e) {
+        console.warn('Failed to parse saved project from localStorage:', e);
+      }
     }
     return createDefaultProject();
   });
 
-  const [activeView, setActiveView] = useState<'timeline' | 'pianoroll' | 'video' | 'mixer'>('timeline');
+  const [activeView, setActiveView] = useState<'timeline' | 'pianoroll' | 'video' | 'mixer' | 'settings'>('timeline');
+
+  // Initialize engine with calibrated performance genome
+  useEffect(() => {
+    try {
+      const genome = loadPerformanceGenome();
+      applyGenomeToEngine(genome);
+    } catch (e) {
+      console.warn('Failed to apply initial performance genome:', e);
+    }
+  }, []);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLooping, setIsLooping] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
@@ -596,14 +638,20 @@ export default function App() {
             isPlaying={isPlaying}
           />
         )}
+
+        {activeView === 'settings' && (
+          <SettingsPage onBackToDaw={() => setActiveView('timeline')} />
+        )}
       </main>
 
-      {/* Bottom Virtual Piano Keyboard with live neon aura glow */}
-      <VirtualKeyboard
-        project={project}
-        activeTrack={activeTrack}
-        webMidiConnected={webMidiConnected}
-      />
+      {/* Bottom Virtual Piano Keyboard with live neon aura glow (visible on DAW views) */}
+      {activeView !== 'settings' && (
+        <VirtualKeyboard
+          project={project}
+          activeTrack={activeTrack}
+          webMidiConnected={webMidiConnected}
+        />
+      )}
 
       {/* LayAI Generative Composer Modal */}
       <LayAiModal

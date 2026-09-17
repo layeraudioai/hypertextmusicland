@@ -518,13 +518,94 @@ export function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
   return new Blob([arrayBuffer], { type: 'audio/wav' });
 }
 
+export interface StemTrackData {
+  id: string;
+  name: string;
+  blob: Blob;
+  url: string;
+  buffer: AudioBuffer;
+  panAngle?: number;
+  category: 'drums' | 'bass' | 'vocals' | 'other' | 'instrumental';
+  color: string;
+}
+
 export interface DynamicStemResult {
+  mode: '4-stem' | '2-stem' | 'spatial';
   ensembleSize: number;
-  stems: { id: string; name: string; blob: Blob; panAngle: number; url: string }[];
+  stems: StemTrackData[];
   multiChannelUrl?: string;
 }
 
-export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Promise<DynamicStemResult> {
+// Biquad filter state and coefficient generator for offline processing
+function createBiquadCoefficients(
+  type: 'lowpass' | 'highpass' | 'bandpass',
+  frequency: number,
+  sampleRate: number,
+  q: number = 0.707
+) {
+  const w0 = (2 * Math.PI * frequency) / sampleRate;
+  const cosw0 = Math.cos(w0);
+  const sinw0 = Math.sin(w0);
+  const alpha = sinw0 / (2 * q);
+
+  let b0 = 0, b1 = 0, b2 = 0, a0 = 1, a1 = 0, a2 = 0;
+
+  if (type === 'lowpass') {
+    b0 = (1 - cosw0) / 2;
+    b1 = 1 - cosw0;
+    b2 = (1 - cosw0) / 2;
+    a0 = 1 + alpha;
+    a1 = -2 * cosw0;
+    a2 = 1 - alpha;
+  } else if (type === 'highpass') {
+    b0 = (1 + cosw0) / 2;
+    b1 = -(1 + cosw0);
+    b2 = (1 + cosw0) / 2;
+    a0 = 1 + alpha;
+    a1 = -2 * cosw0;
+    a2 = 1 - alpha;
+  } else if (type === 'bandpass') {
+    b0 = sinw0 / 2;
+    b1 = 0;
+    b2 = -sinw0 / 2;
+    a0 = 1 + alpha;
+    a1 = -2 * cosw0;
+    a2 = 1 - alpha;
+  }
+
+  return {
+    b0: b0 / a0,
+    b1: b1 / a0,
+    b2: b2 / a0,
+    a1: a1 / a0,
+    a2: a2 / a0,
+  };
+}
+
+function applyBiquadFilter(
+  input: Float32Array,
+  coeffs: { b0: number; b1: number; b2: number; a1: number; a2: number }
+): Float32Array {
+  const output = new Float32Array(input.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  const { b0, b1, b2, a1, a2 } = coeffs;
+
+  for (let i = 0; i < input.length; i++) {
+    const x0 = input[i];
+    const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    output[i] = y0;
+    x2 = x1;
+    x1 = x0;
+    y2 = y1;
+    y1 = y0;
+  }
+  return output;
+}
+
+export async function detectAndSplitStemsDynamic(
+  audioBuffer: AudioBuffer,
+  mode: '4-stem' | '2-stem' | 'spatial' = '4-stem'
+): Promise<DynamicStemResult> {
   const length = audioBuffer.length;
   const sampleRate = audioBuffer.sampleRate;
   
@@ -538,7 +619,7 @@ export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Prom
     left.set(audioBuffer.getChannelData(0));
     right.set(audioBuffer.getChannelData(1));
   } else {
-    // Multi-channel downmix (c0=L, c1=R, c2=L_surround, etc.)
+    // Multi-channel downmix
     const channels = audioBuffer.numberOfChannels;
     for (let c = 0; c < channels; c++) {
       const channelData = audioBuffer.getChannelData(c);
@@ -550,7 +631,250 @@ export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Prom
     }
   }
 
-  // 1. Histogram of pan angles weighted by amplitude
+  // Common Mid/Side and signal metrics
+  const mid = new Float32Array(length);
+  const side = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    mid[i] = (left[i] + right[i]) * 0.5;
+    side[i] = (left[i] - right[i]) * 0.5;
+  }
+
+  // -------------------------------------------------------------
+  // MODE 1: 4-STEM STUDIO SPLIT (Drums, Bass, Vocals, Instruments)
+  // -------------------------------------------------------------
+  if (mode === '4-stem') {
+    // 1. BASS STEM: Lowpass crossover at 220Hz
+    const bassCoeffs = createBiquadCoefficients('lowpass', 220, sampleRate, 0.707);
+    const bassMid = applyBiquadFilter(mid, bassCoeffs);
+    // Add second pass for 24dB/oct steep roll-off
+    const bassFiltered = applyBiquadFilter(bassMid, bassCoeffs);
+
+    // 2. TRANSIENT ONSET ENGINE for DRUMS & PERCUSSION
+    // Computes short-term energy flux and high-frequency bursts
+    const drumsL = new Float32Array(length);
+    const drumsR = new Float32Array(length);
+    const frameSize = 128;
+    let prevEnergy = 0.001;
+
+    // Highpass for drum transient shimmer (snare wire, cymbals, hi-hats)
+    const drumTrebleCoeffs = createBiquadCoefficients('highpass', 4500, sampleRate, 0.7);
+    const trebleL = applyBiquadFilter(left, drumTrebleCoeffs);
+    const trebleR = applyBiquadFilter(right, drumTrebleCoeffs);
+
+    // Transient gain envelope
+    const transientGain = new Float32Array(length);
+    for (let i = 0; i < length; i += frameSize) {
+      let energy = 0;
+      const end = Math.min(length, i + frameSize);
+      for (let j = i; j < end; j++) {
+        energy += mid[j] * mid[j];
+      }
+      energy = Math.sqrt(energy / (end - i + 0.0001));
+
+      // Sudden jump in energy indicates percussive onset
+      const flux = Math.max(0, energy - prevEnergy * 1.25);
+      const isTransient = flux > 0.012;
+      const targetGain = isTransient ? Math.min(1.0, flux * 12) : 0;
+
+      for (let j = i; j < end; j++) {
+        // Fast attack, quick decay
+        const prevG = j > 0 ? transientGain[j - 1] : 0;
+        if (targetGain > prevG) {
+          transientGain[j] = prevG + (targetGain - prevG) * 0.4;
+        } else {
+          transientGain[j] = prevG * 0.96;
+        }
+      }
+      prevEnergy = energy * 0.6 + prevEnergy * 0.4;
+    }
+
+    for (let i = 0; i < length; i++) {
+      const g = transientGain[i];
+      // Drums contain transients + high-frequency percussive shimmer
+      drumsL[i] = left[i] * g * 1.1 + trebleL[i] * 0.45;
+      drumsR[i] = right[i] * g * 1.1 + trebleR[i] * 0.45;
+    }
+
+    // 3. VOCALS & LEAD: Mid-band (220Hz - 3800Hz) with Center Mid-Side phase extraction
+    const vocalBpCoeffs = createBiquadCoefficients('bandpass', 1200, sampleRate, 0.5);
+    const vocalMidBand = applyBiquadFilter(mid, vocalBpCoeffs);
+
+    const vocalsL = new Float32Array(length);
+    const vocalsR = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      const mVal = Math.abs(mid[i]);
+      const sVal = Math.abs(side[i]);
+      // Center coherence: higher when signal is centered (vocals) and low when signal is wide (stereo guitars/reverbs)
+      const centerFactor = mVal / (mVal + sVal * 1.5 + 0.001);
+      // Suppress drum transients from vocal track
+      const drumDucking = Math.max(0.15, 1 - transientGain[i] * 1.2);
+      const vocalSample = vocalMidBand[i] * centerFactor * drumDucking * 1.3;
+      vocalsL[i] = vocalSample;
+      vocalsR[i] = vocalSample;
+    }
+
+    // 4. INSTRUMENTS & OTHER (Accompaniment, synths, guitars, pads, stereo ambience)
+    // Residual difference: Original mix minus (Drums + Bass + Vocals)
+    const otherL = new Float32Array(length);
+    const otherR = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      const bassSample = bassFiltered[i];
+      otherL[i] = left[i] - drumsL[i] * 0.8 - bassSample * 0.95 - vocalsL[i] * 0.85;
+      otherR[i] = right[i] - drumsR[i] * 0.8 - bassSample * 0.95 - vocalsR[i] * 0.85;
+    }
+
+    // Create 4 isolated AudioBuffers
+    const actx = new window.OfflineAudioContext(2, length, sampleRate);
+    
+    // Drums Buffer
+    const drumBuffer = actx.createBuffer(2, length, sampleRate);
+    drumBuffer.getChannelData(0).set(drumsL);
+    drumBuffer.getChannelData(1).set(drumsR);
+    const drumBlob = audioBufferToWavBlob(drumBuffer);
+
+    // Bass Buffer
+    const bassBuffer = actx.createBuffer(2, length, sampleRate);
+    bassBuffer.getChannelData(0).set(bassFiltered);
+    bassBuffer.getChannelData(1).set(bassFiltered);
+    const bassBlob = audioBufferToWavBlob(bassBuffer);
+
+    // Vocals Buffer
+    const vocalBuffer = actx.createBuffer(2, length, sampleRate);
+    vocalBuffer.getChannelData(0).set(vocalsL);
+    vocalBuffer.getChannelData(1).set(vocalsR);
+    const vocalBlob = audioBufferToWavBlob(vocalBuffer);
+
+    // Other Buffer
+    const otherBuffer = actx.createBuffer(2, length, sampleRate);
+    otherBuffer.getChannelData(0).set(otherL);
+    otherBuffer.getChannelData(1).set(otherR);
+    const otherBlob = audioBufferToWavBlob(otherBuffer);
+
+    const stems: StemTrackData[] = [
+      {
+        id: 'stem_drums',
+        name: 'Drums & Percussion',
+        blob: drumBlob,
+        url: URL.createObjectURL(drumBlob),
+        buffer: drumBuffer,
+        category: 'drums',
+        color: '#f97316', // Orange
+      },
+      {
+        id: 'stem_bass',
+        name: 'Bass & Sub',
+        blob: bassBlob,
+        url: URL.createObjectURL(bassBlob),
+        buffer: bassBuffer,
+        category: 'bass',
+        color: '#a855f7', // Purple
+      },
+      {
+        id: 'stem_vocals',
+        name: 'Vocals & Lead',
+        blob: vocalBlob,
+        url: URL.createObjectURL(vocalBlob),
+        buffer: vocalBuffer,
+        category: 'vocals',
+        color: '#06b6d4', // Cyan
+      },
+      {
+        id: 'stem_other',
+        name: 'Instruments & Ambiance',
+        blob: otherBlob,
+        url: URL.createObjectURL(otherBlob),
+        buffer: otherBuffer,
+        category: 'other',
+        color: '#10b981', // Emerald
+      },
+    ];
+
+    let multiChannelUrl: string | undefined;
+    try {
+      const multiWav = createMultiChannelWavBlob(
+        [drumsL, bassFiltered, vocalsL, otherL],
+        sampleRate
+      );
+      multiChannelUrl = URL.createObjectURL(multiWav);
+    } catch (e) {
+      console.warn('Failed to generate multi-channel wav', e);
+    }
+
+    return {
+      mode: '4-stem',
+      ensembleSize: 4,
+      stems,
+      multiChannelUrl,
+    };
+  }
+
+  // -------------------------------------------------------------
+  // MODE 2: 2-STEM ACAPELLA / KARAOKE (Vocals vs Instrumental)
+  // -------------------------------------------------------------
+  if (mode === '2-stem') {
+    const vocalBpCoeffs = createBiquadCoefficients('bandpass', 1200, sampleRate, 0.45);
+    const vocalBand = applyBiquadFilter(mid, vocalBpCoeffs);
+
+    const vocalsL = new Float32Array(length);
+    const vocalsR = new Float32Array(length);
+    const instL = new Float32Array(length);
+    const instR = new Float32Array(length);
+
+    for (let i = 0; i < length; i++) {
+      const mVal = Math.abs(mid[i]);
+      const sVal = Math.abs(side[i]);
+      const centerFactor = mVal / (mVal + sVal * 1.4 + 0.001);
+      const v = vocalBand[i] * centerFactor * 1.35;
+      vocalsL[i] = v;
+      vocalsR[i] = v;
+
+      // Backing Instrumental: original stereo minus isolated center vocals
+      instL[i] = left[i] - v * 0.95;
+      instR[i] = right[i] - v * 0.95;
+    }
+
+    const actx = new window.OfflineAudioContext(2, length, sampleRate);
+    const vocalBuffer = actx.createBuffer(2, length, sampleRate);
+    vocalBuffer.getChannelData(0).set(vocalsL);
+    vocalBuffer.getChannelData(1).set(vocalsR);
+    const vocalBlob = audioBufferToWavBlob(vocalBuffer);
+
+    const instBuffer = actx.createBuffer(2, length, sampleRate);
+    instBuffer.getChannelData(0).set(instL);
+    instBuffer.getChannelData(1).set(instR);
+    const instBlob = audioBufferToWavBlob(instBuffer);
+
+    const stems: StemTrackData[] = [
+      {
+        id: 'stem_vocals_isolated',
+        name: 'Isolated Vocals & Center Lead',
+        blob: vocalBlob,
+        url: URL.createObjectURL(vocalBlob),
+        buffer: vocalBuffer,
+        category: 'vocals',
+        color: '#06b6d4',
+      },
+      {
+        id: 'stem_instrumental_backing',
+        name: 'Instrumental Backing (Karaoke)',
+        blob: instBlob,
+        url: URL.createObjectURL(instBlob),
+        buffer: instBuffer,
+        category: 'instrumental',
+        color: '#f59e0b',
+      },
+    ];
+
+    return {
+      mode: '2-stem',
+      ensembleSize: 2,
+      stems,
+    };
+  }
+
+  // -------------------------------------------------------------
+  // MODE 3: SPATIAL / DYNAMIC PAN ENSEMBLE
+  // -------------------------------------------------------------
   const numBins = 100;
   const histogram = new Float32Array(numBins);
   
@@ -567,7 +891,7 @@ export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Prom
     }
   }
 
-  // 2. Smooth histogram
+  // Smooth histogram
   const smoothed = new Float32Array(numBins);
   for(let i=0; i<numBins; i++) {
     let sum = 0;
@@ -581,7 +905,7 @@ export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Prom
     smoothed[i] = sum / count;
   }
 
-  // 3. Find peaks
+  // Find peaks
   const peaks: { bin: number; angle: number; energy: number }[] = [];
   for (let i = 1; i < numBins - 1; i++) {
     if (smoothed[i] > smoothed[i-1] && smoothed[i] > smoothed[i+1]) {
@@ -597,28 +921,27 @@ export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Prom
 
   peaks.sort((a,b) => b.energy - a.energy);
   const maxEnergy = peaks[0]?.energy || 1;
-  // Can detect up to 256 stems for 256 channel format
-  const validPeaks = peaks.filter(p => p.energy > maxEnergy * 0.05).slice(0, 256);
+  const validPeaks = peaks.filter(p => p.energy > maxEnergy * 0.05).slice(0, 8);
   validPeaks.sort((a,b) => a.angle - b.angle);
 
-  // If no peaks found (e.g., silence), fallback to Mid/Side
   if (validPeaks.length === 0) {
-    validPeaks.push({ bin: 0, angle: 0, energy: maxEnergy }, { bin: 99, angle: Math.PI/2, energy: maxEnergy });
+    validPeaks.push(
+      { bin: 0, angle: 0, energy: maxEnergy },
+      { bin: 50, angle: Math.PI/4, energy: maxEnergy },
+      { bin: 99, angle: Math.PI/2, energy: maxEnergy }
+    );
   }
 
   const multiChannelData: Float32Array[] = [];
 
-  // 4. Extract stems using phase mask
-  const stems = validPeaks.map((peak, idx) => {
-    // We must use `window.OfflineAudioContext` for ts compilation.
+  const stems: StemTrackData[] = validPeaks.map((peak, idx) => {
     const actx = new window.OfflineAudioContext(2, length, sampleRate);
     const buffer = actx.createBuffer(2, length, sampleRate);
     const outL = buffer.getChannelData(0);
     const outR = buffer.getChannelData(1);
-    
     const monoTrack = new Float32Array(length);
 
-    const angleSpread = 0.25;
+    const angleSpread = 0.28;
 
     for (let i = 0; i < length; i++) {
       const l = left[i];
@@ -640,22 +963,26 @@ export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Prom
     const blob = audioBufferToWavBlob(buffer);
     
     let name = "Center (Vocals/Bass)";
-    if (peak.angle < 0.3) name = "Left (Side)";
-    else if (peak.angle > 1.2) name = "Right (Side)";
+    if (peak.angle < 0.3) name = "Left Wing (Side)";
+    else if (peak.angle > 1.2) name = "Right Wing (Side)";
     else if (peak.angle > 0.3 && peak.angle < 0.7) name = "Mid-Left";
     else if (peak.angle > 0.8 && peak.angle < 1.2) name = "Mid-Right";
     name = `${name} (Pan: ${((peak.angle / (Math.PI/2)) * 100).toFixed(0)}%)`;
 
+    const colors = ['#6366f1', '#a855f7', '#ec4899', '#3b82f6', '#10b981', '#f59e0b'];
+
     return {
       id: `stem_${idx}`,
-      name: `Stem ${idx + 1}: ${name}`,
+      name: `Spatial Stem ${idx + 1}: ${name}`,
       panAngle: peak.angle,
       blob,
-      url: URL.createObjectURL(blob)
+      url: URL.createObjectURL(blob),
+      buffer,
+      category: 'other',
+      color: colors[idx % colors.length],
     };
   });
 
-  // Generate multi-channel wav if applicable
   let multiChannelUrl: string | undefined;
   if (stems.length > 0) {
     try {
@@ -667,9 +994,10 @@ export async function detectAndSplitStemsDynamic(audioBuffer: AudioBuffer): Prom
   }
 
   return {
+    mode: 'spatial',
     ensembleSize: stems.length,
     stems,
-    multiChannelUrl
+    multiChannelUrl,
   };
 }
 

@@ -97,8 +97,57 @@ export class SynthEngine {
     return this.ctx;
   }
 
+  // Dynamic Performance & Quality Settings
+  private polyphonyLimit: number = 64;
+  private reverbQuality: 'draft' | 'studio' | 'lush' = 'studio';
+
   public getAnalyser(): AnalyserNode | null {
     return this.analyser;
+  }
+
+  public setFftSize(size: number) {
+    if (this.analyser) {
+      try {
+        // Valid FFT sizes are powers of two from 32 to 32768
+        const validSizes = [256, 512, 1024, 2048, 4096];
+        if (validSizes.includes(size)) {
+          this.analyser.fftSize = size;
+        }
+      } catch (e) {
+        console.warn('Failed to set analyser FFT size:', e);
+      }
+    }
+  }
+
+  public setPolyphonyLimit(limit: number) {
+    this.polyphonyLimit = Math.max(8, Math.min(128, limit));
+  }
+
+  public setReverbQuality(quality: 'draft' | 'studio' | 'lush') {
+    this.reverbQuality = quality;
+    if (this.ctx && this.reverbConvolver) {
+      try {
+        const duration = quality === 'draft' ? 1.0 : quality === 'studio' ? 2.2 : 3.8;
+        const decay = quality === 'draft' ? 1.2 : quality === 'studio' ? 2.0 : 2.8;
+        this.reverbConvolver.buffer = this.createImpulseResponse(this.ctx, duration, decay);
+      } catch (e) {
+        console.warn('Failed to update reverb quality:', e);
+      }
+    }
+  }
+
+  public getAudioTelemetry() {
+    const ctx = this.ctx;
+    return {
+      sampleRate: ctx?.sampleRate || 44100,
+      baseLatency: (ctx as any)?.baseLatency ? (((ctx as any).baseLatency * 1000).toFixed(2) + ' ms') : 'N/A',
+      outputLatency: (ctx as any)?.outputLatency ? (((ctx as any).outputLatency * 1000).toFixed(2) + ' ms') : 'N/A',
+      activeVoices: this.activeLiveVoices.size + this.activeStemSources.size,
+      state: ctx?.state || 'uninitialized',
+      fftSize: this.analyser?.fftSize || 512,
+      polyphonyLimit: this.polyphonyLimit,
+      reverbQuality: this.reverbQuality,
+    };
   }
 
   public setMasterVolume(vol: number) {
@@ -213,7 +262,12 @@ export class SynthEngine {
     this.activeStemSources.clear();
   }
 
-  public scheduleAudioStem(track: Track, audioTime: number, bpm: number, offsetBeats: number = 0) {
+  public scheduleAudioStem(
+    track: Track,
+    audioTime: number,
+    bpm: number,
+    offsetBeats: number = 0
+  ) {
     if (!this.ctx || track.muted || !track.audioStem || !track.audioStem.buffer) return;
     
     if (this.activeStemSources.has(track.id)) {
@@ -229,9 +283,21 @@ export class SynthEngine {
     const gainNode = this.ctx.createGain();
     gainNode.gain.setValueAtTime(track.volume, audioTime);
     
-    // Simple routing to master
+    // Stereo panning support for stems
+    let outNode: AudioNode = gainNode;
+    if (typeof this.ctx.createStereoPanner === 'function') {
+      try {
+        const panner = this.ctx.createStereoPanner();
+        panner.pan.setValueAtTime(Math.max(-1, Math.min(1, track.pan || 0)), audioTime);
+        gainNode.connect(panner);
+        outNode = panner;
+      } catch (e) {
+        outNode = gainNode;
+      }
+    }
+
     src.connect(gainNode);
-    gainNode.connect(this.compressor || this.ctx.destination);
+    outNode.connect(this.compressor || this.ctx.destination);
     
     const offsetSeconds = (offsetBeats * 60) / bpm;
     if (offsetSeconds < track.audioStem.buffer.duration) {
@@ -561,16 +627,30 @@ export class SynthEngine {
     comp.connect(offlineCtx.destination);
 
     // Schedule all notes & audio stems across all tracks
+    const hasSolo = project.tracks.some((t) => t.solo);
     for (const track of project.tracks) {
-      if (track.muted) continue;
+      if (track.muted || (hasSolo && !track.solo)) continue;
       if (track.audioStem && track.audioStem.buffer) {
         try {
           const stemSrc = offlineCtx.createBufferSource();
           stemSrc.buffer = track.audioStem.buffer;
           const stemGain = offlineCtx.createGain();
           stemGain.gain.setValueAtTime(track.volume, 0);
+
+          let outNode: AudioNode = stemGain;
+          if (typeof offlineCtx.createStereoPanner === 'function') {
+            try {
+              const panner = offlineCtx.createStereoPanner();
+              panner.pan.setValueAtTime(Math.max(-1, Math.min(1, track.pan || 0)), 0);
+              stemGain.connect(panner);
+              outNode = panner;
+            } catch (e) {
+              outNode = stemGain;
+            }
+          }
+
           stemSrc.connect(stemGain);
-          stemGain.connect(masterGain);
+          outNode.connect(masterGain);
           stemSrc.start(0);
         } catch (e) {
           console.warn('Could not render offline audio stem:', e);
