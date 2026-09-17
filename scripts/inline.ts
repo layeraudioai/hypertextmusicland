@@ -7,7 +7,7 @@ const assets = join(dist, 'assets');
 let html = readFileSync(join(dist, 'index.html'), 'utf8');
 
 // Remove script tags with src
-html = html.replace(/<script.*?src="\/assets\/.*?\.js".*?><\/script>/g, '');
+html = html.replace(/<script.*?rel="stylesheet".*?>/g, '');
 
 // Remove link tags for stylesheets
 html = html.replace(/<link.*?rel="stylesheet".*?>/g, '');
