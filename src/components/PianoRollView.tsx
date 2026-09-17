@@ -42,7 +42,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
 
   const totalBeats = project.totalBars * 4;
   const pixelsPerBeat = 64; // width per beat in piano roll
-  const noteRowHeight = 20; // height per note pitch
+  const noteRowHeight = 20 * 1.1; // height per note pitch
 
   const activeTrack =
     project.tracks.find((t) => t.id === project.selectedTrackId) || project.tracks[0];
@@ -196,18 +196,16 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
         <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800">
           <button
             onClick={() => setTool('draw')}
-            className={`p-1.5 rounded transition-colors ${
-              tool === 'draw' ? 'bg-sky-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
-            }`}
+            className={`p-1.5 rounded transition-colors ${tool === 'draw' ? 'bg-sky-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
+              }`}
             title="Draw Note (Pencil)"
           >
             <Pencil className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => setTool('erase')}
-            className={`p-1.5 rounded transition-colors ${
-              tool === 'erase' ? 'bg-rose-500 text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
+            className={`p-1.5 rounded transition-colors ${tool === 'erase' ? 'bg-rose-500 text-white' : 'text-slate-400 hover:text-slate-200'
+              }`}
             title="Erase Note"
           >
             <Eraser className="w-3.5 h-3.5" />
@@ -299,7 +297,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
         {/* Left Vertical Keyboard */}
         <div className="w-20 flex-shrink-0 bg-slate-900 border-r border-slate-800 z-10 sticky left-0">
           {/* Top ruler placeholder */}
-          <div className="h-8 border-b border-slate-800 bg-slate-950 px-2 flex items-center text-[10px] font-mono text-slate-500">
+          <div className="h-5 border-b border-slate-800 bg-slate-950 px-2 flex items-center text-[6px] font-mono text-slate-500">
             KEY
           </div>
           {/* Keys list descending from maxPitch to minPitch */}
@@ -312,11 +310,10 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
               <div
                 key={pitch}
                 onClick={() => handleKeyClick(pitch)}
-                className={`h-5 border-b border-slate-800/60 px-1.5 flex items-center justify-between text-[10px] font-mono cursor-pointer transition-colors ${
-                  isBlack
-                    ? 'bg-slate-950 hover:bg-slate-800 text-slate-400'
-                    : 'bg-slate-850 hover:bg-slate-700 text-slate-200'
-                }`}
+                className={`h-5 border-b border-slate-800/60 px-1.5 flex items-center justify-between text-[10px] font-mono cursor-pointer transition-colors ${isBlack
+                  ? 'bg-slate-950 hover:bg-slate-800 text-slate-400'
+                  : 'bg-slate-850 hover:bg-slate-700 text-slate-200'
+                  }`}
                 style={{ height: `${noteRowHeight}px` }}
                 title={`Click to preview ${noteName}`}
               >
@@ -367,18 +364,16 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
             return (
               <div
                 key={pitch}
-                className={`w-full border-b border-slate-800/40 relative flex ${
-                  isBlack ? 'bg-slate-950/90' : 'bg-slate-900/30'
-                }`}
+                className={`w-full border-b border-slate-800/40 relative flex ${isBlack ? 'bg-slate-950/90' : 'bg-slate-900/30'
+                  }`}
                 style={{ height: `${noteRowHeight}px` }}
               >
                 {/* Vertical bar grid dividers */}
                 {Array.from({ length: project.totalBars * 4 }).map((_, beatIdx) => (
                   <div
                     key={beatIdx}
-                    className={`h-full border-r ${
-                      beatIdx % 4 === 3 ? 'border-slate-800' : 'border-slate-850/60'
-                    }`}
+                    className={`h-full border-r ${beatIdx % 4 === 3 ? 'border-slate-800' : 'border-slate-850/60'
+                      }`}
                     style={{ width: `${pixelsPerBeat}px` }}
                   />
                 ))}
