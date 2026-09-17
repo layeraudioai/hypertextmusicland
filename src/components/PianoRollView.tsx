@@ -37,6 +37,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
 
   // Drag Interaction State
   const [isDragging, setIsDragging] = useState(false);
+  const [interactionType, setInteractionType] = useState<'select' | 'move' | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
@@ -78,56 +79,146 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
 
     if (pitch < minPitch || pitch > maxPitch || snappedBeat >= totalBeats) return;
 
+    // Check if we clicked on an existing note
+    const clickedNote = activeTrack.notes.find(
+      (n) =>
+        snappedBeat >= n.time &&
+        snappedBeat < n.time + n.duration &&
+        pitch === n.pitch
+    );
+
+    if (tool === 'erase') {
+      if (clickedNote) {
+        onUpdateProject((prev) => ({
+          ...prev,
+          tracks: prev.tracks.map((t) =>
+            t.id === activeTrack.id
+              ? { ...t, notes: t.notes.filter((n) => n.id !== clickedNote.id) }
+              : t
+          ),
+        }));
+      }
+      return;
+    }
+
     setIsDragging(true);
     setDragStart({ x: clickX, y: clickY });
 
-    if (tool === 'draw') {
-      // Add note
-      const newNote: Note = {
-        id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        pitch,
-        time: Number(snappedBeat.toFixed(3)),
-        duration: snapValue * 2, // default length
-        velocity: 0.85,
-        selected: true,
-      };
-
-      onUpdateProject((prev) => ({
-        ...prev,
-        tracks: prev.tracks.map((t) =>
-          t.id === activeTrack.id ? { ...t, notes: [...t.notes.map(n => ({...n, selected: false})), newNote] } : t
-        ),
-      }));
-    } else if (tool === 'select') {
-      // Clear selection
-      onUpdateProject((prev) => ({
-        ...prev,
-        tracks: prev.tracks.map((t) =>
-          t.id === activeTrack.id ? { ...t, notes: t.notes.map(n => ({ ...n, selected: false })) } : t
-        ),
-      }));
+    if (e.button === 2) {
+      // Right Click: Drag and Select
+      setInteractionType('select');
+      if (!e.shiftKey) {
+        onUpdateProject((prev) => ({
+          ...prev,
+          tracks: prev.tracks.map((t) =>
+            t.id === activeTrack.id ? { ...t, notes: t.notes.map(n => ({ ...n, selected: false })) } : t
+          ),
+        }));
+      }
+    } else if (e.button === 0) {
+      // Left Click
+      if (clickedNote) {
+        // If clicked on a note
+        if (e.shiftKey) {
+          // Toggle selection
+          onUpdateProject((prev) => ({
+            ...prev,
+            tracks: prev.tracks.map((t) =>
+              t.id === activeTrack.id
+                ? { ...t, notes: t.notes.map(n => n.id === clickedNote.id ? { ...n, selected: !n.selected } : n) }
+                : t
+            ),
+          }));
+          setInteractionType(null);
+        } else if (clickedNote.selected) {
+          // Prepare to MOVE
+          setInteractionType('move');
+        } else {
+          // Select only this note and move
+          setInteractionType('move');
+          onUpdateProject((prev) => ({
+            ...prev,
+            tracks: prev.tracks.map((t) =>
+              t.id === activeTrack.id
+                ? { ...t, notes: t.notes.map(n => ({ ...n, selected: n.id === clickedNote.id })) }
+                : t
+            ),
+          }));
+        }
+      } else {
+        // Clicked empty space: Add new note
+        setInteractionType(null);
+        if (!e.shiftKey) {
+            onUpdateProject((prev) => ({
+              ...prev,
+              tracks: prev.tracks.map((t) =>
+                t.id === activeTrack.id ? { ...t, notes: t.notes.map(n => ({ ...n, selected: false })) } : t
+              ),
+            }));
+        }
+        
+        if (tool === 'draw') {
+            const newNote: Note = {
+              id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              pitch,
+              time: Number(snappedBeat.toFixed(3)),
+              duration: snapValue * 2, // default length
+              velocity: 0.85,
+              selected: false, // Don't auto-select new note
+            };
+    
+            onUpdateProject((prev) => ({
+              ...prev,
+              tracks: prev.tracks.map((t) =>
+                t.id === activeTrack.id ? { ...t, notes: [...t.notes, newNote] } : t
+              ),
+            }));
+        }
+      }
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isDragging || !gridRef.current) return;
+    if (!isDragging || !gridRef.current || !dragStart) return;
     
     const rect = gridRef.current.getBoundingClientRect();
     const currentX = e.clientX - rect.left + gridRef.current.scrollLeft;
     const currentY = (e.clientY - rect.top) + (gridRef.current.scrollTop - HEADER_HEIGHT);
     
-    if (tool === 'select') {
+    if (interactionType === 'select') {
       setSelectionBox({
-        x1: Math.min(dragStart!.x, currentX),
-        y1: Math.min(dragStart!.y, currentY),
-        x2: Math.max(dragStart!.x, currentX),
-        y2: Math.max(dragStart!.y, currentY),
+        x1: Math.min(dragStart.x, currentX),
+        y1: Math.min(dragStart.y, currentY),
+        x2: Math.max(dragStart.x, currentX),
+        y2: Math.max(dragStart.y, currentY),
       });
+    } else if (interactionType === 'move') {
+      const deltaX = currentX - dragStart.x;
+      const deltaY = currentY - dragStart.y;
+      const beatDelta = Math.round(deltaX / pixelsPerBeat / snapValue) * snapValue;
+      const pitchDelta = -Math.round(deltaY / noteRowHeight);
+      
+      if (beatDelta !== 0 || pitchDelta !== 0) {
+        onUpdateProject((prev) => ({
+          ...prev,
+          tracks: prev.tracks.map((t) =>
+            t.id === activeTrack?.id ? {
+              ...t,
+              notes: t.notes.map(n => n.selected ? {
+                ...n,
+                time: Math.max(0, n.time + beatDelta),
+                pitch: Math.min(maxPitch, Math.max(minPitch, n.pitch + pitchDelta))
+              } : n)
+            } : t
+          ),
+        }));
+        setDragStart({ x: currentX, y: currentY }); // Reset drag start for relative move
+      }
     }
   };
 
   const handleMouseUp = () => {
-    if (tool === 'select' && selectionBox) {
+    if (interactionType === 'select' && selectionBox) {
       // Finalize selection based on box
       onUpdateProject((prev) => ({
         ...prev,
@@ -146,23 +237,9 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
       }));
     }
     setIsDragging(false);
+    setInteractionType(null);
     setSelectionBox(null);
-  };
-
-  const handleNoteClick = (e: React.MouseEvent, noteId: string) => {
-    e.stopPropagation();
-    if (!activeTrack) return;
-
-    if (tool === 'erase') {
-      onUpdateProject((prev) => ({
-        ...prev,
-        tracks: prev.tracks.map((t) =>
-          t.id === activeTrack.id
-            ? { ...t, notes: t.notes.filter((n) => n.id !== noteId) }
-            : t
-        ),
-      }));
-    }
+    setDragStart(null);
   };
 
   // MidiMuse: Scale Quantize all notes on track
@@ -390,6 +467,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onContextMenu={(e) => e.preventDefault()}
           className="flex-1 flex flex-col relative cursor-crosshair"
           style={{ width: `${totalBeats * pixelsPerBeat}px` }}
         >
@@ -472,7 +550,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
             return (
               <div
                 key={note.id}
-                onClick={(e) => handleNoteClick(e, note.id)}
+                onContextMenu={(e) => e.preventDefault()}
                 className={`absolute rounded-sm px-1.5 flex items-center justify-between text-[10px] font-mono font-bold shadow-md cursor-pointer hover:brightness-110 z-10 ${note.selected ? 'ring-2 ring-white' : ''}`}
                 style={{
                   top: `${top + HEADER_HEIGHT}px`, // offset by ruler height
@@ -483,7 +561,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
                   color: '#000000',
                   boxShadow: `0 0 8px ${color}88`,
                 }}
-                title={`${getNoteName(note.pitch)} • Click with Eraser to remove`}
+                title={`${getNoteName(note.pitch)}`}
               >
                 <span className="truncate">{getNoteName(note.pitch)}</span>
               </div>
