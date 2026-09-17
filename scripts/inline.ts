@@ -17,13 +17,17 @@ const files = readdirSync(assets);
 const cssFile = files.find(f => f.endsWith('.css'));
 const jsFile = files.find(f => f.endsWith('.js'));
 if (jsFile) {
-    const jsContent = readFileSync(join(assets, jsFile), 'utf8');
-    html = html.replace('</body>', `</body><script>${jsContent}</script>`);
+    const jsContent = readFileSync(join(assets, jsFile));
+    // Escape </script> to prevent premature closing
+    const escapedJs = jsContent.replace(/<\/script>/gi, '<\\/script>');
+    html = html.replace('</body>', `</body><script>${escapedJs}</script>`);
 }
 
 if (cssFile) {
-    const cssContent = readFileSync(join(assets, cssFile), 'utf8');
-    html = html.replace('</script>', `<style>${cssContent}</style>`);
+    const cssContent = readFileSync(join(assets, cssFile));
+    // Escape </style> to prevent premature closing
+    const escapedCss = cssContent.replace(/<\/style>/gi, '<\\/style>');
+    html = html.replace('</script>', `<style>${escapedCss}</style>`);
 }
 
 writeFileSync(join(dist, 'index.html'), html);
