@@ -4,7 +4,14 @@ import { ProjectState, Track, Note } from './types/daw';
 import { createDefaultProject } from './audio/defaultProject';
 import { synth } from './audio/synthEngine';
 import { parseMidiFile, exportToMidiFile } from './audio/midiParser';
-import { sampleManager } from './audio/audioProcessor';
+import {
+  sampleManager,
+  applyDistortion,
+  processGlitchStutter,
+  mashAudio,
+  audioBufferToWavBlob,
+  decodeAudioFile,
+} from './audio/audioProcessor';
 import { DEFAULT_TRACK_EFFECTS } from './audio/constants';
 import { Header } from './components/Header';
 import { TransportBar } from './components/TransportBar';
@@ -87,7 +94,15 @@ export default function App() {
   const [isLayAiOpen, setIsLayAiOpen] = useState(false);
   const [isSonicRngOpen, setIsSonicRngOpen] = useState(false);
   const [isTransmuterOpen, setIsTransmuterOpen] = useState(false);
-  const [transmuterTab, setTransmuterTab] = useState<'audio-to-sf2' | 'audio-to-midi' | 'midi-sf2-to-audio' | 'midi-to-audio' | 'sf2-to-audio' | 'audio-to-stems'>('audio-to-sf2');
+  const [transmuterTab, setTransmuterTab] = useState<
+    | 'audio-to-sf2'
+    | 'audio-to-midi'
+    | 'midi-sf2-to-audio'
+    | 'midi-to-audio'
+    | 'sf2-to-audio'
+    | 'audio-to-stems'
+    | 'tts-all-together'
+  >('audio-to-sf2');
 
   // Confirmation & Export Modals
   const [isClearProjectOpen, setIsClearProjectOpen] = useState(false);
@@ -478,36 +493,212 @@ export default function App() {
     scheduledNotesRef.current.clear();
   };
 
-  // Placeholder handlers for header buttons
+  // Dynamic audio file picker helper
+  const pickAudioFiles = (multiple: boolean = false): Promise<AudioBuffer[]> => {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'audio/*';
+      input.multiple = multiple;
+      input.onchange = async (e: any) => {
+        const files: File[] = Array.from(e.target?.files || []);
+        if (files.length === 0) {
+          resolve([]);
+          return;
+        }
+        try {
+          const buffers: AudioBuffer[] = [];
+          for (const f of files) {
+            const buf = await decodeAudioFile(f);
+            buffers.push(buf);
+          }
+          resolve(buffers);
+        } catch (err) {
+          console.error('Error decoding audio files:', err);
+          resolve([]);
+        }
+      };
+      input.click();
+    });
+  };
+
+  // DISTORT: Dynamic Waveshaper & Bitcrush Resynthesis
   const distort = async () => {
-    const audioTracks = project.tracks.filter(t => t.audioStem && t.audioStem.buffer);
-    if (audioTracks.length === 0) { alert('No audio tracks to distort'); return; }
-    
-    // Distort first track found
-    const buffer = audioTracks[0].audioStem!.buffer!;
-    const distorted = applyDistortion(buffer, 0.5);
-    
-    // Update track with distorted buffer (simplified)
-    alert('Distortion applied to track: ' + audioTracks[0].name);
-    // Note: Implementation of replacing the buffer in the project state 
-    // requires a more complex update flow which I'm happy to finish next.
+    let audioTrack = project.tracks.find((t) => t.id === project.selectedTrackId && t.audioStem?.buffer);
+    if (!audioTrack) {
+      audioTrack = project.tracks.find((t) => t.audioStem?.buffer);
+    }
+
+    let bufferToDistort: AudioBuffer | null = audioTrack?.audioStem?.buffer || null;
+    let sourceName = audioTrack?.name || 'Sample';
+
+    if (!bufferToDistort) {
+      setToastMessage('Choose an audio sample from your computer to distort...');
+      const picked = await pickAudioFiles(false);
+      if (picked.length === 0) return;
+      bufferToDistort = picked[0];
+      sourceName = 'Imported Audio';
+    }
+
+    try {
+      const distortedBuffer = applyDistortion(bufferToDistort, 0.65);
+      const wavBlob = audioBufferToWavBlob(distortedBuffer);
+      const wavUrl = URL.createObjectURL(wavBlob);
+      const durationBeats = (distortedBuffer.duration * project.bpm) / 60;
+
+      const newTrackId = `track-distort-${Date.now()}`;
+      const newTrack: Track = {
+        id: newTrackId,
+        name: `⚡ Distorted: ${sourceName}`,
+        instrument: 'synth_lead',
+        color: '#f97316',
+        volume: 0.85,
+        pan: 0,
+        muted: false,
+        solo: false,
+        armed: false,
+        notes: [],
+        effects: { ...DEFAULT_TRACK_EFFECTS, distortion: 0.5 },
+        audioStem: {
+          id: `stem-${Date.now()}`,
+          name: `Distorted ${sourceName}`,
+          url: wavUrl,
+          buffer: distortedBuffer,
+          duration: durationBeats,
+        },
+      };
+
+      setProject((prev) => ({
+        ...prev,
+        totalBars: Math.max(prev.totalBars, Math.ceil(durationBeats / 4)),
+        selectedTrackId: newTrackId,
+        tracks: [...prev.tracks, newTrack],
+      }));
+
+      setToastMessage(`⚡ Distorted track rendered and placed onto timeline!`);
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err: any) {
+      console.error('Distortion failed:', err);
+      setToastMessage('Distortion error: ' + err.message);
+    }
   };
 
-  const masterWorks = () => {
-      // Clarification needed
-      alert('MasterWorks functionality not yet defined. What should this do?');
+  // MASTERWORKS: Beat-Synced Glitch Shuffle & Stutter Resequencing
+  const masterWorks = async () => {
+    let audioTrack = project.tracks.find((t) => t.id === project.selectedTrackId && t.audioStem?.buffer);
+    if (!audioTrack) {
+      audioTrack = project.tracks.find((t) => t.audioStem?.buffer);
+    }
+
+    let bufferToProcess: AudioBuffer | null = audioTrack?.audioStem?.buffer || null;
+    let sourceName = audioTrack?.name || 'Audio Track';
+
+    if (!bufferToProcess) {
+      setToastMessage('Choose an audio sample from your computer for MasterWorks glitch shuffle...');
+      const picked = await pickAudioFiles(false);
+      if (picked.length === 0) return;
+      bufferToProcess = picked[0];
+      sourceName = 'Imported Sample';
+    }
+
+    try {
+      const glitchedBuffer = processGlitchStutter(bufferToProcess, project.bpm || 120, 2);
+      const wavBlob = audioBufferToWavBlob(glitchedBuffer);
+      const wavUrl = URL.createObjectURL(wavBlob);
+      const durationBeats = (glitchedBuffer.duration * project.bpm) / 60;
+
+      const newTrackId = `track-glitch-${Date.now()}`;
+      const newTrack: Track = {
+        id: newTrackId,
+        name: `🔀 MasterWorks Glitch: ${sourceName}`,
+        instrument: 'chiptune',
+        color: '#a855f7',
+        volume: 0.88,
+        pan: 0,
+        muted: false,
+        solo: false,
+        armed: false,
+        notes: [],
+        effects: { ...DEFAULT_TRACK_EFFECTS, delaySend: 0.3 },
+        audioStem: {
+          id: `stem-${Date.now()}`,
+          name: `Glitch Stutter ${sourceName}`,
+          url: wavUrl,
+          buffer: glitchedBuffer,
+          duration: durationBeats,
+        },
+      };
+
+      setProject((prev) => ({
+        ...prev,
+        totalBars: Math.max(prev.totalBars, Math.ceil(durationBeats / 4)),
+        selectedTrackId: newTrackId,
+        tracks: [...prev.tracks, newTrack],
+      }));
+
+      setToastMessage(`🔀 MasterWorks Glitch Stutter rendered onto timeline!`);
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err: any) {
+      console.error('MasterWorks failed:', err);
+      setToastMessage('MasterWorks error: ' + err.message);
+    }
   };
 
+  // MUSICMASH: Multi-Track Ensemble Mashup Slicer
   const musicMash = async () => {
-    const audioTracks = project.tracks.filter(t => t.audioStem && t.audioStem.buffer);
-    if (audioTracks.length === 0) { alert('No audio tracks to mash'); return; }
-    
-    const buffers = audioTracks.map(t => t.audioStem!.buffer!);
-    const mashed = await mashAudio(buffers);
-    
-    alert('Mash complete! Created new buffer of length: ' + mashed.length);
-    // Note: Implementation of adding the mashed buffer as a new track 
-    // requires a more complex update flow which I'm happy to finish next.
+    const audioTracks = project.tracks.filter((t) => t.audioStem && t.audioStem.buffer);
+    let buffers: AudioBuffer[] = audioTracks.map((t) => t.audioStem!.buffer!);
+
+    if (buffers.length === 0) {
+      setToastMessage('Select audio files to mash and slice together...');
+      const picked = await pickAudioFiles(true);
+      if (picked.length === 0) return;
+      buffers = picked;
+    } else if (buffers.length === 1) {
+      buffers = [buffers[0], buffers[0]];
+    }
+
+    try {
+      const mashedBuffer = await mashAudio(buffers);
+      const wavBlob = audioBufferToWavBlob(mashedBuffer);
+      const wavUrl = URL.createObjectURL(wavBlob);
+      const durationBeats = (mashedBuffer.duration * project.bpm) / 60;
+
+      const newTrackId = `track-mash-${Date.now()}`;
+      const newTrack: Track = {
+        id: newTrackId,
+        name: `🧬 MusicMash: Stems Remix`,
+        instrument: 'ambient_pad',
+        color: '#06b6d4',
+        volume: 0.85,
+        pan: 0,
+        muted: false,
+        solo: false,
+        armed: false,
+        notes: [],
+        effects: { ...DEFAULT_TRACK_EFFECTS, reverbSend: 0.25 },
+        audioStem: {
+          id: `stem-${Date.now()}`,
+          name: `Mashed Remixed Stems`,
+          url: wavUrl,
+          buffer: mashedBuffer,
+          duration: durationBeats,
+        },
+      };
+
+      setProject((prev) => ({
+        ...prev,
+        totalBars: Math.max(prev.totalBars, Math.ceil(durationBeats / 4)),
+        selectedTrackId: newTrackId,
+        tracks: [...prev.tracks, newTrack],
+      }));
+
+      setToastMessage(`🧬 MusicMash complete! Cutup remix placed onto timeline.`);
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err: any) {
+      console.error('MusicMash failed:', err);
+      setToastMessage('MusicMash error: ' + err.message);
+    }
   };
 
   // Clear Project Handler

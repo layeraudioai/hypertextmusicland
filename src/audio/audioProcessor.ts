@@ -98,7 +98,7 @@ export async function mashAudio(buffers: AudioBuffer[]): Promise<AudioBuffer> {
   return out;
 }
 
-export function applyDistortion(buffer: AudioBuffer, amount: number): AudioBuffer {
+export function applyDistortion(buffer: AudioBuffer, amount: number = 0.5): AudioBuffer {
   const ctx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(
     buffer.numberOfChannels,
     buffer.length,
@@ -106,19 +106,33 @@ export function applyDistortion(buffer: AudioBuffer, amount: number): AudioBuffe
   );
   
   const output = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+  const sampleRate = buffer.sampleRate;
   
+  // Dynamic waveshaping and bitcrushing inspired by hybrid DSP algorithms
   for (let c = 0; c < buffer.numberOfChannels; c++) {
     const input = buffer.getChannelData(c);
     const outputData = output.getChannelData(c);
     
     for (let i = 0; i < input.length; i++) {
-        // Hard clipping
-        let sample = input[i] * (1 + amount * 10);
-        outputData[i] = Math.max(-1, Math.min(1, sample));
+      const timeSec = i / sampleRate;
+      const v = Math.abs(Math.sin(timeSec / 2));
+      const st = Math.pow(0.5, 1 + v * 14 * amount);
+      
+      // Waveshaping transfer function
+      let x = input[i] * (1 + amount * 6);
+      if (x > 1) x = 1;
+      if (x < -1) x = -1;
+      const shaped = (Math.PI + 100) * x / (Math.PI + 100 * Math.abs(x) + 0.0001);
+      
+      // Dynamic bitcrush quantization
+      const quantized = Math.round(shaped / st) * st;
+      outputData[i] = Math.max(-1, Math.min(1, quantized * 0.9));
     }
   }
   return output;
 }
+
+export const distortAudio = applyDistortion;
 
 export function processGlitchStutter(
   audioBuffer: AudioBuffer,
@@ -615,15 +629,30 @@ export interface StemTrackData {
   url: string;
   buffer: AudioBuffer;
   panAngle?: number;
-  category: 'drums' | 'bass' | 'vocals' | 'other' | 'instrumental';
+  category: 'drums' | 'bass' | 'vocals' | 'other' | 'instrumental' | 'rhythm' | 'spatial' | 'stat-heuristic';
   color: string;
+  vocalTrope?: string;
+  rhythmicTrope?: string;
+  panDescription?: string;
+  aiStatMetric?: {
+    spectralCentroidHz?: number;
+    spectralFlatness?: number;
+    rmsEnergy?: number;
+    crestFactor?: number;
+  };
+  channelIndex?: number;
 }
 
 export interface DynamicStemResult {
-  mode: '4-stem' | '2-stem' | 'spatial';
+  mode: '4-stem' | '2-stem' | 'spatial' | 'ensemble-256';
   ensembleSize: number;
   stems: StemTrackData[];
   multiChannelUrl?: string;
+  multiChannelBlob?: Blob;
+  summaryStats?: {
+    totalChannels: number;
+    topEnergeticChannelIds?: string[];
+  };
 }
 
 // Biquad filter state and coefficient generator for offline processing

@@ -16,6 +16,8 @@ import {
   RefreshCw,
   Plus,
   Wand2,
+  Mic,
+  Volume1,
 } from 'lucide-react';
 import { ProjectState, Track, Note, CustomSf2Instrument, InstrumentId } from '../types/daw';
 import {
@@ -35,6 +37,12 @@ import { synth } from '../audio/synthEngine';
 import { exportToMidiFile } from '../audio/midiParser';
 import { generateSf2Binary } from '../audio/sf2Generator';
 import { ROOT_NOTES, SOUNDFONT_PRESETS, getNoteName, getPitchColor, DEFAULT_TRACK_EFFECTS } from '../audio/constants';
+import {
+  transmuteTtsAllTogether,
+  injectTtsTracksToProject,
+  TtsTransmuteResult,
+} from '../audio/ttsTransmuter';
+import { MESPEAK_VOICES, ensureMeSpeakInitialized } from '../audio/meSpeakService';
 
 // Stem Waveform Visualizer
 function StemWaveform({ buffer, color = '#38bdf8' }: { buffer?: AudioBuffer; color?: string }) {
@@ -160,14 +168,19 @@ const PRESET_PATTERNS: Record<
   },
 };
 
-export type TransmuterTab = 'audio-to-sf2' | 'audio-to-midi' | 'midi-sf2-to-audio' | 'audio-to-stems';
+export type TransmuterTab =
+  | 'audio-to-sf2'
+  | 'audio-to-midi'
+  | 'midi-sf2-to-audio'
+  | 'audio-to-stems'
+  | 'tts-all-together';
 
 interface AudioTransmuterModalProps {
   isOpen: boolean;
   onClose: () => void;
   project: ProjectState;
   onUpdateProject: (updater: (prev: ProjectState) => ProjectState) => void;
-  initialTab?: TransmuterTab | 'midi-to-audio' | 'sf2-to-audio' | 'audio-to-stems';
+  initialTab?: TransmuterTab | 'midi-to-audio' | 'sf2-to-audio' | 'audio-to-stems' | 'tts' | 'tts-all-together';
 }
 
 export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
@@ -183,6 +196,7 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
     }
     if (tab === 'audio-to-midi') return 'audio-to-midi';
     if (tab === 'audio-to-stems') return 'audio-to-stems';
+    if (tab === 'tts' || tab === 'tts-all-together') return 'tts-all-together';
     return 'audio-to-sf2';
   };
 
@@ -222,6 +236,17 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
   const [detectedStems, setDetectedStems] = useState<DynamicStemResult | null>(null);
   const [isSplittingStems, setIsSplittingStems] = useState(false);
   const [stemMode, setStemMode] = useState<'4-stem' | '2-stem' | 'spatial'>('4-stem');
+
+  // TTS Speech to SF2 + MIDI + Stem State
+  const [ttsText, setTtsText] = useState('Hyper Text Music Land synthesized speech');
+  const [ttsVoice, setTtsVoice] = useState('en/en-us');
+  const [ttsPitch, setTtsPitch] = useState(50);
+  const [ttsSpeed, setTtsSpeed] = useState(160);
+  const [ttsCorrection, setTtsCorrection] = useState<'natural' | 'auto-tune' | 'vocoder-robot'>('auto-tune');
+  const [ttsTargetRoot, setTtsTargetRoot] = useState(60);
+  const [isSynthesizingTts, setIsSynthesizingTts] = useState(false);
+  const [ttsResult, setTtsResult] = useState<TtsTransmuteResult | null>(null);
+  const [isPlayingTts, setIsPlayingTts] = useState(false);
 
   // Success notifications
   const [notification, setNotification] = useState<string | null>(null);
@@ -925,6 +950,46 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
     );
   };
 
+  // TTS Speech to SF2 + MIDI + Stem Handlers
+  const handleSynthesizeTts = async () => {
+    if (!ttsText.trim()) return;
+    setIsSynthesizingTts(true);
+    try {
+      ensureMeSpeakInitialized();
+      const res = await transmuteTtsAllTogether(ttsText.trim(), {
+        voice: ttsVoice,
+        pitch: ttsPitch,
+        speed: ttsSpeed,
+        bpm: project.bpm,
+        targetMidiRoot: ttsTargetRoot,
+        pitchCorrection: ttsCorrection,
+      });
+      setTtsResult(res);
+      setNotification(`✓ Transmuted speech! Audio Stem + SF2 Instrument + ${res.transcribedNotes.length} MIDI notes generated.`);
+      setTimeout(() => setNotification(null), 5000);
+    } catch (err: any) {
+      console.error('TTS synthesis error:', err);
+      setNotification('TTS error: ' + (err?.message || err));
+    } finally {
+      setIsSynthesizingTts(false);
+    }
+  };
+
+  const handleInjectTtsToDaw = () => {
+    if (!ttsResult) return;
+    onUpdateProject((prev) => {
+      const { tracks, totalBars } = injectTtsTracksToProject(ttsResult, prev.tracks, prev.totalBars);
+      return {
+        ...prev,
+        tracks,
+        totalBars,
+        selectedTrackId: tracks[tracks.length - 1]?.id || prev.selectedTrackId,
+      };
+    });
+    setNotification('✓ Injected Voice Stem track and Playable SF2 Instrument track into DAW timeline!');
+    setTimeout(() => setNotification(null), 5000);
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 select-none">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
@@ -1007,6 +1072,21 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
             <span>Audio to Stems</span>
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/50 uppercase font-mono font-bold">
               AI Splitter
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('tts-all-together')}
+            className={`py-3 px-4 border-b-2 transition-all flex items-center gap-2 ${
+              activeTab === 'tts-all-together'
+                ? 'border-teal-400 text-teal-300 bg-teal-950/20'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Mic className="w-4 h-4 text-teal-400" />
+            <span>TTS Voice (meSpeak)</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-teal-950 text-teal-300 border border-teal-800/50 uppercase font-mono font-bold">
+              All Together
             </span>
           </button>
         </div>
@@ -1929,6 +2009,286 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* TAB 5: TTS All Together (meSpeak -> SF2 + MIDI + Audio Stem) */}
+          {activeTab === 'tts-all-together' && (
+            <div className="flex flex-col gap-6">
+              {/* Introduction Card */}
+              <div className="p-4 rounded-xl bg-teal-950/20 border border-teal-800/40 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-teal-300 font-bold text-sm">
+                  <Mic className="w-4 h-4 text-teal-400" />
+                  <span>meSpeak Text-To-Speech → SF2, MIDI & Stem Transmuter</span>
+                </div>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  Synthesize vocal phrases directly in the browser via meSpeak. Automatically packages the voice into a
+                  playable <strong>SoundFont SF2</strong> instrument, transcribes syllabic rhythms into melodic <strong>MIDI notes</strong>,
+                  and places a high-fidelity <strong>Audio Stem</strong> onto the timeline all together.
+                </p>
+              </div>
+
+              {/* TTS Input Controls */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Left 2 Cols: Text Prompt & Voice Settings */}
+                <div className="lg:col-span-2 flex flex-col gap-4 p-4 rounded-xl bg-slate-950 border border-slate-800">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-slate-300 font-semibold text-xs flex items-center justify-between">
+                      <span>Speech Text Prompt</span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {ttsText.length} characters
+                      </span>
+                    </label>
+                    <textarea
+                      value={ttsText}
+                      onChange={(e) => setTtsText(e.target.value)}
+                      placeholder="Type what you want the meSpeak vocal synthesizer to vocalize..."
+                      rows={3}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-slate-100 font-mono text-xs focus:border-teal-500 focus:outline-none resize-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Voice Select */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-slate-300 font-semibold text-xs">Voice Profile</label>
+                      <select
+                        value={ttsVoice}
+                        onChange={(e) => setTtsVoice(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-slate-200 text-xs focus:border-teal-500 focus:outline-none"
+                      >
+                        {MESPEAK_VOICES.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name} ({v.lang.toUpperCase()})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Tuning / Pitch Correction Mode */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-slate-300 font-semibold text-xs">Vocal Processing Style</label>
+                      <select
+                        value={ttsCorrection}
+                        onChange={(e: any) => setTtsCorrection(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-slate-200 text-xs focus:border-teal-500 focus:outline-none"
+                      >
+                        <option value="auto-tune">Auto-Tune Melodic (Musical Quantization)</option>
+                        <option value="vocoder-robot">Robot Vocoder (Precision Fixed Root)</option>
+                        <option value="natural">Natural Acoustic (Raw meSpeak Microtonal)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Sliders */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    <div className="flex flex-col gap-1 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                      <div className="flex justify-between text-[11px] text-slate-400">
+                        <span>Speed</span>
+                        <span className="font-mono text-teal-300">{ttsSpeed} WPM</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="80"
+                        max="260"
+                        step="5"
+                        value={ttsSpeed}
+                        onChange={(e) => setTtsSpeed(Number(e.target.value))}
+                        className="accent-teal-500 h-1.5 bg-slate-800 rounded-lg"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                      <div className="flex justify-between text-[11px] text-slate-400">
+                        <span>Voice Pitch</span>
+                        <span className="font-mono text-teal-300">{ttsPitch}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="20"
+                        max="90"
+                        step="1"
+                        value={ttsPitch}
+                        onChange={(e) => setTtsPitch(Number(e.target.value))}
+                        className="accent-teal-500 h-1.5 bg-slate-800 rounded-lg"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                      <div className="flex justify-between text-[11px] text-slate-400">
+                        <span>Root Key</span>
+                        <span className="font-mono text-teal-300">
+                          {getNoteName(ttsTargetRoot)} ({ttsTargetRoot})
+                        </span>
+                      </div>
+                      <select
+                        value={ttsTargetRoot}
+                        onChange={(e) => setTtsTargetRoot(Number(e.target.value))}
+                        className="bg-slate-900 border border-slate-700 rounded p-1 text-[11px] text-slate-200"
+                      >
+                        {[36, 48, 53, 55, 57, 60, 62, 64, 65, 67, 69, 72].map((pitch) => (
+                          <option key={pitch} value={pitch}>
+                            {getNoteName(pitch)} (MIDI {pitch})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex justify-end">
+                    <button
+                      onClick={handleSynthesizeTts}
+                      disabled={isSynthesizingTts || !ttsText.trim()}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-teal-500/20 disabled:opacity-50 transition-all cursor-pointer"
+                    >
+                      {isSynthesizingTts ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Synthesizing Voice & Generating All...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          <span>Synthesize & Transmute All Together</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Right Col: Feature Overview & Quick Presets */}
+                <div className="flex flex-col gap-3 p-4 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="font-bold text-slate-200 text-xs">Pipeline Outputs</span>
+                  <div className="flex flex-col gap-2 text-[11px] text-slate-400">
+                    <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center gap-2">
+                      <Volume2 className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                      <span><strong>Audio Stem:</strong> Decoded 44.1kHz speech waveform</span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center gap-2">
+                      <Layers className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span><strong>SoundFont SF2:</strong> Playable instrument on any MIDI octave</span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center gap-2">
+                      <Music className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                      <span><strong>MIDI Notes:</strong> Syllable-transcribed rhythms and pitches</span>
+                    </div>
+                  </div>
+
+                  <span className="font-bold text-slate-200 text-xs pt-1">Sample Phrases</span>
+                  <div className="flex flex-col gap-1.5">
+                    {[
+                      'Drop the bass right here in the mix',
+                      'Futuristic cyberspace hyper workstation',
+                      'One two three four break the rhythm down',
+                    ].map((phrase, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setTtsText(phrase)}
+                        className="text-left px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800/80 text-slate-300 hover:text-white text-[11px] truncate transition-colors"
+                      >
+                        "{phrase}"
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* TTS Result Inspection & DAW Injection */}
+              {ttsResult && (
+                <div className="p-5 rounded-xl bg-slate-950 border border-teal-800/50 flex flex-col gap-4 shadow-xl">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-3 h-3 rounded-full bg-teal-400 animate-pulse" />
+                      <div>
+                        <h4 className="font-bold text-slate-100 text-sm">
+                          Synthesized Vocal Ensemble Ready
+                        </h4>
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          Duration: {ttsResult.durationSec.toFixed(2)}s • {ttsResult.durationBeats.toFixed(1)} beats •{' '}
+                          {ttsResult.transcribedNotes.length} Syllables
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleInjectTtsToDaw}
+                        className="px-4 py-2 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-teal-500/20 transition-all cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Inject All to DAW</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Waveform & Audio Player */}
+                  <div className="flex flex-col gap-2">
+                    <StemWaveform buffer={ttsResult.audioBuffer} color="#14b8a6" />
+                    <audio src={ttsResult.audioStem.url} controls className="w-full h-8 rounded-lg" />
+                  </div>
+
+                  {/* Export Options Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                    {/* Stem WAV */}
+                    <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-teal-300 text-xs flex items-center gap-1.5">
+                          <Volume2 className="w-3.5 h-3.5" />
+                          <span>Voice WAV Stem</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">Direct 44.1kHz raw speech audio</p>
+                      </div>
+                      <a
+                        href={ttsResult.audioStem.url}
+                        download={`${ttsResult.audioStem.id}.wav`}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold flex items-center justify-center gap-1.5 text-xs transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Download WAV
+                      </a>
+                    </div>
+
+                    {/* SoundFont SF2 */}
+                    <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-sky-300 text-xs flex items-center gap-1.5">
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>SoundFont SF2</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          {ttsResult.customInstrument.name} (Root {ttsResult.customInstrument.rootPitch})
+                        </p>
+                      </div>
+                      <a
+                        href={ttsResult.sf2DownloadUrl}
+                        download={ttsResult.sf2FileName}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold flex items-center justify-center gap-1.5 text-xs transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Download SF2
+                      </a>
+                    </div>
+
+                    {/* MIDI Syllables */}
+                    <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-purple-300 text-xs flex items-center gap-1.5">
+                          <Music className="w-3.5 h-3.5" />
+                          <span>Syllable MIDI File</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          {ttsResult.transcribedNotes.length} transcribed notes
+                        </p>
+                      </div>
+                      <a
+                        href={ttsResult.midiDownloadUrl}
+                        download={ttsResult.midiFileName}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold flex items-center justify-center gap-1.5 text-xs transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Download MIDI
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

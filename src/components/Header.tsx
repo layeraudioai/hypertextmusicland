@@ -22,6 +22,9 @@ import {
   GitBranch,
   Settings,
   Flame,
+  Zap,
+  Shuffle,
+  Mic,
 } from 'lucide-react';
 import { ProjectState } from '../types/daw';
 
@@ -111,41 +114,36 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* View Switcher Tabs */}
+        {/* View Switcher Tabs & Quick Resynthesis Actions */}
         <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-medium">
           <button
             id="distort"
             onClick={() => distort()}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${activeView === 'distort'
-              ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
-              }`}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 transition-all font-semibold"
+            title="Distort: Dynamic waveshaping & bitcrush resynthesis onto timeline"
           >
-            <Sparkles className="w-3.5 h-3.5" />
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
             <span>DISTORT</span>
           </button>
           <button
             id="masterWorks"
             onClick={() => masterWorks()}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${activeView === 'masterWorks'
-              ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
-              }`}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-purple-300 hover:text-purple-200 hover:bg-purple-950/40 transition-all font-semibold"
+            title="MasterWorks: Beat-synced glitch stutter and shuffle onto timeline"
           >
-            <Sparkles className="w-3.5 h-3.5" />
+            <Shuffle className="w-3.5 h-3.5 text-purple-400" />
             <span>MASTERWORKS</span>
           </button>
           <button
             id="musicMash"
             onClick={() => musicMash()}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${activeView === 'musicMash'
-              ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
-              }`}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-cyan-300 hover:text-cyan-200 hover:bg-cyan-950/40 transition-all font-semibold"
+            title="MusicMash: Cutup ensemble mashup of audio stems onto timeline"
           >
-            <Sparkles className="w-3.5 h-3.5" />
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
             <span>MUSICMASH</span>
           </button>
+          <div className="w-[1px] h-4 bg-slate-800 mx-1" />
           <button
             id="view-tab-timeline"
             onClick={() => setActiveView('timeline')}
@@ -234,6 +232,16 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Upload className="w-3.5 h-3.5 text-sky-400" />
             <span>Audio / SF2 / MIDI</span>
+          </button>
+
+          <button
+            id="btn-open-tts"
+            onClick={() => onOpenAudioTransmuter('tts-all-together')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gradient-to-r from-teal-500/20 to-emerald-500/20 hover:from-teal-500/30 hover:to-emerald-500/30 text-teal-300 border border-teal-500/30 shadow-sm transition-all"
+            title="TTS meSpeak: Convert Speech text into meSpeak Voice, SF2 Instrument, and MIDI Syllables All Together"
+          >
+            <Mic className="w-3.5 h-3.5 text-teal-400" />
+            <span>TTS Voice</span>
           </button>
 
           <button
