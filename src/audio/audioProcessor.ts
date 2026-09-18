@@ -71,6 +71,96 @@ export function computeAudioMetrics(buffer: AudioBuffer, bpm: number, beatsPerBa
   };
 }
 
+export async function mashAudio(buffers: AudioBuffer[]): Promise<AudioBuffer> {
+  if (buffers.length === 0) throw new Error("No buffers to mash");
+  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  
+  // Bookmarklet-like shuffling logic
+  let main = buffers[Math.floor(Math.random() * buffers.length)];
+  let out = ctx.createBuffer(main.numberOfChannels, main.length, main.sampleRate);
+  let sliceLen = Math.floor(main.sampleRate / 4); // Slice into ~250ms chunks
+
+  for (let s = 0; s < main.length; s += sliceLen) {
+    let b = buffers[Math.floor(Math.random() * buffers.length)];
+    let srcOff = Math.floor(Math.random() * Math.max(1, b.length - sliceLen));
+    let len = Math.min(sliceLen, main.length - s);
+    
+    for (let c = 0; c < out.numberOfChannels; c++) {
+      let d = out.getChannelData(c);
+      let src = b.getChannelData(c % b.numberOfChannels);
+      for (let k = 0; k < len; k++) {
+        if (s + k < d.length) {
+            d[s + k] = src[srcOff + k] || 0;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+export function applyDistortion(buffer: AudioBuffer, amount: number): AudioBuffer {
+  const ctx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(
+    buffer.numberOfChannels,
+    buffer.length,
+    buffer.sampleRate
+  );
+  
+  const output = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+  
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const input = buffer.getChannelData(c);
+    const outputData = output.getChannelData(c);
+    
+    for (let i = 0; i < input.length; i++) {
+        // Hard clipping
+        let sample = input[i] * (1 + amount * 10);
+        outputData[i] = Math.max(-1, Math.min(1, sample));
+    }
+  }
+  return output;
+}
+
+export function processGlitchStutter(
+  audioBuffer: AudioBuffer,
+  bpm: number,
+  multiplier: number
+): AudioBuffer {
+  const sampleRate = audioBuffer.sampleRate;
+  const beatLength = Math.floor(sampleRate * (60 / bpm));
+  const numBeats = Math.floor(audioBuffer.length / beatLength);
+
+  if (numBeats < 1) throw new Error("Audio too short for beat-based processing");
+
+  const totalBeats = numBeats * multiplier;
+  const ctx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(
+    audioBuffer.numberOfChannels,
+    totalBeats * beatLength,
+    sampleRate
+  );
+
+  const output = ctx.createBuffer(
+    audioBuffer.numberOfChannels,
+    totalBeats * beatLength,
+    sampleRate
+  );
+
+  for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+    const od = audioBuffer.getChannelData(c);
+    const outd = output.getChannelData(c);
+    let sb = 0; // Current beat source index
+    for (let b = 0; b < totalBeats; b++) {
+      // 25% chance to jump randomly, 75% chance to continue sequentially
+      sb = Math.random() < 0.25 ? Math.floor(Math.random() * numBeats) : (sb + 1) % numBeats;
+      const sourceOffset = sb * beatLength;
+      const destOffset = b * beatLength;
+      for (let s = 0; s < beatLength; s++) {
+        outd[destOffset + s] = od[sourceOffset + s] || 0;
+      }
+    }
+  }
+  return output;
+}
+
 // 2. High-precision Autocorrelation Pitch Detector
 export interface PitchDetectionResult {
   frequency: number; // in Hz

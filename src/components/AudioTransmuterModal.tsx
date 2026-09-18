@@ -25,6 +25,7 @@ import {
   renderSf2DemoWav,
   audioBufferToWavBlob,
   detectAndSplitStemsDynamic,
+  distortAudio,
   DynamicStemResult,
   StemTrackData,
   sampleManager,

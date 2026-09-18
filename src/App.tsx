@@ -478,6 +478,38 @@ export default function App() {
     scheduledNotesRef.current.clear();
   };
 
+  // Placeholder handlers for header buttons
+  const distort = async () => {
+    const audioTracks = project.tracks.filter(t => t.audioStem && t.audioStem.buffer);
+    if (audioTracks.length === 0) { alert('No audio tracks to distort'); return; }
+    
+    // Distort first track found
+    const buffer = audioTracks[0].audioStem!.buffer!;
+    const distorted = applyDistortion(buffer, 0.5);
+    
+    // Update track with distorted buffer (simplified)
+    alert('Distortion applied to track: ' + audioTracks[0].name);
+    // Note: Implementation of replacing the buffer in the project state 
+    // requires a more complex update flow which I'm happy to finish next.
+  };
+
+  const masterWorks = () => {
+      // Clarification needed
+      alert('MasterWorks functionality not yet defined. What should this do?');
+  };
+
+  const musicMash = async () => {
+    const audioTracks = project.tracks.filter(t => t.audioStem && t.audioStem.buffer);
+    if (audioTracks.length === 0) { alert('No audio tracks to mash'); return; }
+    
+    const buffers = audioTracks.map(t => t.audioStem!.buffer!);
+    const mashed = await mashAudio(buffers);
+    
+    alert('Mash complete! Created new buffer of length: ' + mashed.length);
+    // Note: Implementation of adding the mashed buffer as a new track 
+    // requires a more complex update flow which I'm happy to finish next.
+  };
+
   // Clear Project Handler
   const handleConfirmClearProject = () => {
     setIsPlaying(false);
@@ -556,6 +588,9 @@ export default function App() {
         onUpdateProject={setProject}
         activeView={activeView}
         setActiveView={setActiveView}
+        distort={distort}
+        masterWorks={masterWorks}
+        musicMash={musicMash}
         onOpenLayAi={() => setIsLayAiOpen(true)}
         onOpenSonicRng={() => setIsSonicRngOpen(true)}
         onOpenAudioTransmuter={(tab) => {

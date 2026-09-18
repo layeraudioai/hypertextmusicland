@@ -30,6 +30,9 @@ interface HeaderProps {
   onUpdateProject: (updater: (prev: ProjectState) => ProjectState) => void;
   activeView: 'timeline' | 'pianoroll' | 'video' | 'mixer' | 'settings';
   setActiveView: (view: 'timeline' | 'pianoroll' | 'video' | 'mixer' | 'settings') => void;
+  distort: () => void;
+  masterWorks: () => void;
+  musicMash: () => void;
   onOpenLayAi: () => void;
   onOpenSonicRng: () => void;
   onOpenAudioTransmuter: (tab?: 'audio-to-sf2' | 'audio-to-midi' | 'midi-sf2-to-audio' | 'midi-to-audio' | 'sf2-to-audio') => void;
@@ -53,6 +56,9 @@ export const Header: React.FC<HeaderProps> = ({
   onUpdateProject,
   activeView,
   setActiveView,
+  distort,
+  masterWorks,
+  musicMash,
   onOpenLayAi,
   onOpenSonicRng,
   onOpenAudioTransmuter,
@@ -110,7 +116,6 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             id="distort"
             onClick={() => distort()}
-            //javascript:(function(){(function(){var f=document.createElement('input');f.type='file';f.onchange=async function(){var c=new AudioContext();var b=await f.files[0].arrayBuffer().then(function(d){return c.decodeAudioData(d)});var s=c.createBufferSource(),l=c.createBiquadFilter(),w=c.createWaveShaper(),g=c.createGain(),p=c.createScriptProcessor(4096,2,2);s.buffer=b;l.type='lowshelf';l.frequency.value=80;var cv=new Float32Array(44100);for(var i=0;i<44100;i++){var x=i/22050-1;cv[i]=(Math.PI+100)*x/(Math.PI+100*Math.abs(x))}w.curve=cv;p.onaudioprocess=function(e){var v=Math.abs(Math.sin(c.currentTime/2)),st=Math.pow(0.5,1+v*14);l.gain.value=25+v*30;g.gain.value=2+v;for(var j=0;j<e.outputBuffer.numberOfChannels;j++){var iD=e.inputBuffer.getChannelData(j),oD=e.outputBuffer.getChannelData(j);for(var k=0;k<iD.length;k++)oD[k]=Math.round(iD[k]/st)*st}};s.connect(l).connect(w).connect(g).connect(p).connect(c.destination);c.resume();s.start()};f.click();})()})();
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${activeView === 'distort'
               ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-sm'
               : 'text-slate-400 hover:text-slate-200'
@@ -122,7 +127,6 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             id="masterWorks"
             onClick={() => masterWorks()}
-            //javascript:(function(){javascript:(() => {let i = document.createElement('input');i.type = 'file';i.accept = 'audio/*';i.onchange = e => {let f = e.target.files[0];let r = new FileReader();r.onload = async () => {let ac = new (window.AudioContext || window.webkitAudioContext)();let ob = await ac.decodeAudioData(r.result);let bpm = parseFloat(prompt("BPM?", "120")) || 120;let mult = parseInt(prompt("Length multiplier?", "2")) || 2;let bl = Math.floor(ob.sampleRate * (60 / bpm));let nb = Math.floor(ob.length / bl);if (nb < 1) return alert("Too short");let nnb = nb * mult;let out = ac.createBuffer(ob.numberOfChannels, nnb * bl, ob.sampleRate);for (let c = 0; c < ob.numberOfChannels; c++) {let od = ob.getChannelData(c), outd = out.getChannelData(c);let sb = 0;for (let b = 0; b < nnb; b++) {sb = (Math.random() < 0.25) ? Math.floor(Math.random() * nb) : (sb + 1) % nb;let soff = sb * bl, doff = b * bl;for (let s = 0; s < bl; s++) outd[doff + s] = od[soff + s];}}let s = ac.createBufferSource();s.buffer = out;s.connect(ac.destination);s.start();alert("Playing!");};r.readAsArrayBuffer(f);};i.click();})();})();
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${activeView === 'masterWorks'
               ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-sm'
               : 'text-slate-400 hover:text-slate-200'
@@ -134,7 +138,6 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             id="musicMash"
             onClick={() => musicMash()}
-            //javascript:(function(){javascript:(async()=>{let i=document.createElement('input');i.type='file';i.multiple=true;i.accept='audio/*';i.onchange=async e=>{let files=[...e.target.files];if(!files.length)return;let ctx=new AudioContext();let bufs=await Promise.all(files.map(f=>f.arrayBuffer().then(b=>ctx.decodeAudioData(b))));let main=bufs[Math.floor(Math.random()*bufs.length)];let out=ctx.createBuffer(main.numberOfChannels*4,main.length,main.sampleRate);let sliceLen=Math.floor(main.sampleRate/main.numberOfChannels);for(let s=0;s<main.length;s+=sliceLen){let b=bufs[Math.floor(Math.random()*bufs.length)];let srcOff=Math.floor(Math.random()*Math.max(1,b.length-sliceLen));let len=Math.min(sliceLen,main.length-s);for(let c=0;c<out.numberOfChannels;c++){let d=out.getChannelData(c),src=b.getChannelData(c%b.numberOfChannels*4);for(let k=0;k<len;k++)d[s+k]=src[srcOff+k]||0;}}let nC=out.numberOfChannels*4,len=out.length*nC*4+44,v=new DataView(new ArrayBuffer(len)),p=0,w=(s,d)=>{if(s==2){v.setUint16(p,d,true);p+=2;}else{v.setUint32(p,d,true);p+=4;}};w(4,0x46464952);w(4,len-8);w(4,0x45564157);w(4,0x20746d66);w(4,16);w(2,1);w(2,nC);w(4,out.sampleRate);w(4,out.sampleRate*nC*2);w(2,nC*2);w(2,16);w(4,0x61746164);w(4,len-p-4);let ch=Array.from({length:nC},(_,i)=>out.getChannelData(i));for(let i=0;i<out.length;i++){for(let c=0;c<nC;c++){let s=Math.max(-1,Math.min(1,ch[c][i]));v.setInt16(p,s<0?s*32768:s*32767,true);p+=2;}}let a=document.createElement(%27a%27);a.href=URL.createObjectURL(new Blob([v],{type:%27audio/wav%27}));a.download=%27shuffled.wav%27;a.click();};i.click();})();})();
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${activeView === 'musicMash'
               ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-sm'
               : 'text-slate-400 hover:text-slate-200'
