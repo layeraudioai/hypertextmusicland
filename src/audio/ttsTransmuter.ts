@@ -225,6 +225,7 @@ export async function transmuteTtsAllTogether(
     duration: audioBuffer.duration,
     audioBuffer: audioBuffer,
     sf2Blob,
+    isSf2: true,
   };
   sampleManager.registerInstrument(sf2Instrument);
 

@@ -18,6 +18,7 @@ export interface CustomSf2Instrument {
   sf2Blob?: Blob;
   loopStart?: number;
   loopEnd?: number;
+  isSf2?: boolean;
 }
 
 export interface Note {

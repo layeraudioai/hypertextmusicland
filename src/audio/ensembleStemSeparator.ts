@@ -176,13 +176,17 @@ export interface EnsembleSeparationResult {
 }
 
 /**
- * Helper to generate simple 2nd order biquad bandpass coefficients
+ * Linkwitz-Riley 4th order bandpass filter coefficients.
+ * Formed by cascading two 2nd order Butterworth bandpass filters.
  */
 function bandpassCoeffs(centerFreq: number, sampleRate: number, q: number = 1.0) {
+  // Cascaded 2nd order sections (LR-4 approximation)
+  const bw = centerFreq / q;
   const w0 = (2 * Math.PI * centerFreq) / sampleRate;
-  const alpha = Math.sin(w0) / (2 * q);
+  const alpha = Math.sin(w0) * Math.sinh(Math.log(2) / 2 * bw / centerFreq);
   const cosw0 = Math.cos(w0);
 
+  // Single 2nd order bandpass filter
   const b0 = alpha;
   const b1 = 0;
   const b2 = -alpha;
@@ -190,6 +194,8 @@ function bandpassCoeffs(centerFreq: number, sampleRate: number, q: number = 1.0)
   const a1 = -2 * cosw0;
   const a2 = 1 - alpha;
 
+  // Return normalized coefficients for single stage
+  // The filterArray function will need to be applied twice for LR-4 (cascaded)
   return {
     b0: b0 / a0,
     b1: b1 / a0,
@@ -197,6 +203,19 @@ function bandpassCoeffs(centerFreq: number, sampleRate: number, q: number = 1.0)
     a1: a1 / a0,
     a2: a2 / a0,
   };
+}
+
+/**
+ * Applies a 4th-order filter by cascading two passes of the 2nd-order biquad.
+ */
+function filterArrayLR4(
+  input: Float32Array,
+  coeffs: { b0: number; b1: number; b2: number; a1: number; a2: number }
+): Float32Array {
+  // Pass 1
+  const pass1 = filterArray(input, coeffs);
+  // Pass 2
+  return filterArray(pass1, coeffs);
 }
 
 function filterArray(
@@ -314,35 +333,37 @@ export async function splitDynamicEnsemble(
     const trope = VOCAL_FREQUENCY_TROPES[b];
     const q = Math.max(0.6, trope.centerHz / (trope.highHz - trope.lowHz));
     const coeffs = bandpassCoeffs(trope.centerHz, sampleRate, q);
-    bandSignalsMid.push(filterArray(mid, coeffs));
-    bandSignalsSide.push(filterArray(side, coeffs));
+    bandSignalsMid.push(filterArrayLR4(mid, coeffs));
+    bandSignalsSide.push(filterArrayLR4(side, coeffs));
   }
 
-  onProgress(30, 'Extracting rhythmic tropes (transient vs sustained envelopes)...');
+  onProgress(30, 'Extracting frequency-aware rhythmic transients...');
 
-  // Compute frame-wise transient flux & sustained envelopes
-  const frameSize = 256;
-  const numFrames = Math.floor(length / frameSize);
-  const transientEnvelope = new Float32Array(length);
-  const sustainedEnvelope = new Float32Array(length);
+  // Compute frame-wise transient flux per band
+  const numBands = VOCAL_FREQUENCY_TROPES.length;
+  const transientEnvelopes: Float32Array[] = [];
 
-  let prevE = 0.001;
-  for (let f = 0; f < numFrames; f++) {
-    const start = f * frameSize;
-    const end = Math.min(length, start + frameSize);
-    let sumSq = 0;
-    for (let i = start; i < end; i++) {
-      sumSq += mid[i] * mid[i];
+  for (let b = 0; b < numBands; b++) {
+    const bandMid = bandSignalsMid[b];
+    const envelope = new Float32Array(length);
+    let prevE = 0.001;
+    for (let f = 0; f < numFrames; f++) {
+      const start = f * frameSize;
+      const end = Math.min(length, start + frameSize);
+      let sumSq = 0;
+      for (let i = start; i < end; i++) {
+        sumSq += bandMid[i] * bandMid[i];
+      }
+      const rms = Math.sqrt(sumSq / frameSize);
+      const flux = Math.max(0, rms - prevE * 1.25);
+      const isTransient = flux > 0.008;
+
+      for (let i = start; i < end; i++) {
+        envelope[i] = isTransient ? Math.min(1.0, flux * 15) : 0.05;
+      }
+      prevE = rms * 0.5 + prevE * 0.5;
     }
-    const rms = Math.sqrt(sumSq / frameSize);
-    const flux = Math.max(0, rms - prevE * 1.25);
-    const isTransient = flux > 0.008;
-
-    for (let i = start; i < end; i++) {
-      transientEnvelope[i] = isTransient ? Math.min(1.0, flux * 15) : 0.05;
-      sustainedEnvelope[i] = isTransient ? 0.2 : 1.0;
-    }
-    prevE = rms * 0.5 + prevE * 0.5;
+    transientEnvelopes.push(envelope);
   }
 
   onProgress(45, 'Evaluating AI statistical heuristics (centroids, flatness, crest)...');
@@ -407,7 +428,7 @@ export async function splitDynamicEnsemble(
 
     // Dynamic weighting based on Rhythmic Trope
     const isTransientTarget = rhythmicTrope.transientWeight > 0.5;
-    const rhythmMod = isTransientTarget ? transientEnvelope : sustainedEnvelope;
+    const rMask = isTransientTarget ? transientEnvelopes[vocalIdx] : new Float32Array(length).fill(1.0);
 
     // AI Stat target weighting (e.g. tonal enhances Mid, noisy enhances Side/transients)
     const midWeight = statHeuristic.spectralTarget === 'tonal' ? 1.3 : 0.8;
@@ -419,16 +440,17 @@ export async function splitDynamicEnsemble(
       const frameIdx = Math.min(numFrames - 1, Math.floor(i / frameSize));
       const curPan = panAngles[frameIdx];
 
-      // Pan similarity mask
+      // Pan similarity mask (sharpened non-linear curve)
       const panDiff = Math.abs(curPan - targetPanAngle);
-      const panMask = Math.max(0.1, 1 - panDiff / 0.75);
+      const linearMask = Math.max(0.1, 1 - panDiff / 0.75);
+      const panMask = linearMask * linearMask; // Squared for sharper isolation
 
-      const rMask = rhythmMod[i];
+      const rMaskVal = rMask[i];
       const sampleMid = bMid[i] * midWeight;
       const sampleSide = bSide[i] * sideWeight;
 
-      const combinedM = sampleMid * rMask * panMask;
-      const combinedS = sampleSide * rMask * panMask;
+      const combinedM = sampleMid * rMaskVal * panMask;
+      const combinedS = sampleSide * rMaskVal * panMask;
 
       const sL = (combinedM + combinedS) * panGainL * 1.5;
       const sR = (combinedM - combinedS) * panGainR * 1.5;

@@ -29,18 +29,29 @@ export async function hydrateProject(project: ProjectState): Promise<ProjectStat
   // Hydrate Custom Instruments
   const hydratedInstruments = await Promise.all(
     (project.customInstruments || []).map(async (inst) => {
-      if (inst.audioBuffer) {
+      // If already has audioBuffer, and NOT an SF2 instrument that might need further hydration, skip
+      if (inst.audioBuffer && !inst.isSf2) {
         sampleManager.registerInstrument(inst);
-        return inst; // Already hydrated
+        return inst;
       }
-      console.log(`[Hydration] Hydrating instrument: ${inst.id}`);
+      
+      console.log(`[Hydration] Hydrating instrument: ${inst.id}, isSf2: ${!!inst.isSf2}`);
       const arrayBuffer = await getAudioData(inst.id);
       if (arrayBuffer) {
-        console.log(`[Hydration] Decoding buffer for instrument: ${inst.id}`);
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-        const hydratedInst = { ...inst, audioBuffer };
-        sampleManager.registerInstrument(hydratedInst);
-        return hydratedInst;
+        if (inst.isSf2) {
+          console.log(`[Hydration] Hydrating SF2 instrument: ${inst.id}`);
+          const sf2Blob = new Blob([arrayBuffer], { type: 'application/x-soundfont' });
+          const sf2Url = URL.createObjectURL(sf2Blob);
+          const hydratedInst = { ...inst, sf2Blob, sf2Url };
+          sampleManager.registerInstrument(hydratedInst);
+          return hydratedInst;
+        } else {
+          console.log(`[Hydration] Decoding buffer for instrument: ${inst.id}`);
+          const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+          const hydratedInst = { ...inst, audioBuffer };
+          sampleManager.registerInstrument(hydratedInst);
+          return hydratedInst;
+        }
       }
       console.warn(`[Hydration] Could not find buffer for instrument: ${inst.id}`);
       return inst;
