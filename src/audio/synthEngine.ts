@@ -667,6 +667,118 @@ export class SynthEngine {
     return this.audioBufferToWav(renderedBuffer);
   }
 
+  // Render a specific list of notes from a track into an AudioBuffer
+  public async renderNotesToAudioBuffer(
+    track: Track,
+    notes: Note[],
+    bpm: number,
+    alignToZero: boolean = true
+  ): Promise<{ buffer: AudioBuffer; startBeat: number; durationBeats: number }> {
+    if (notes.length === 0) {
+      const OfflineCtxClass = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+      const emptyCtx = new OfflineCtxClass(2, 44100, 44100);
+      return { buffer: emptyCtx.createBuffer(2, 44100, 44100), startBeat: 0, durationBeats: 1 };
+    }
+
+    const beatSeconds = 60 / bpm;
+    const minBeat = alignToZero ? Math.min(...notes.map((n) => n.time)) : 0;
+    const maxBeat = Math.max(...notes.map((n) => n.time + n.duration));
+    const durationBeats = Math.max(0.25, maxBeat - minBeat);
+    const totalDurationSec = durationBeats * beatSeconds + 0.8; // release tail
+    const sampleRate = 44100;
+
+    const OfflineCtxClass = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+    const offlineCtx = new OfflineCtxClass(2, Math.ceil(totalDurationSec * sampleRate), sampleRate);
+
+    const masterGain = offlineCtx.createGain();
+    masterGain.gain.setValueAtTime(1.0, 0);
+    masterGain.connect(offlineCtx.destination);
+
+    for (const note of notes) {
+      const noteStartTime = Math.max(0, (note.time - minBeat) * beatSeconds);
+      const noteDuration = note.duration * beatSeconds;
+      this.synthesizeOfflineVoice(offlineCtx, track, note, noteStartTime, noteDuration, masterGain);
+    }
+
+    const renderedBuffer = await offlineCtx.startRendering();
+    return { buffer: renderedBuffer, startBeat: minBeat, durationBeats };
+  }
+
+  // Slices a section of an AudioBuffer between startSec and endSec
+  public sliceAudioBuffer(buffer: AudioBuffer, startSec: number, endSec: number): AudioBuffer {
+    const sampleRate = buffer.sampleRate;
+    const startSample = Math.max(0, Math.floor(startSec * sampleRate));
+    const endSample = Math.min(buffer.length, Math.ceil(endSec * sampleRate));
+    const sliceLength = Math.max(1, endSample - startSample);
+
+    const OfflineCtxClass = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+    const ctx = new OfflineCtxClass(buffer.numberOfChannels, sliceLength, sampleRate);
+    const sliced = ctx.createBuffer(buffer.numberOfChannels, sliceLength, sampleRate);
+
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const src = buffer.getChannelData(c);
+      const dest = sliced.getChannelData(c);
+      for (let i = 0; i < sliceLength; i++) {
+        dest[i] = src[startSample + i] || 0;
+      }
+    }
+    return sliced;
+  }
+
+  // Render a specific time range of tracks into an AudioBuffer
+  public async renderTimelineRangeToAudioBuffer(
+    tracks: Track[],
+    startBeat: number,
+    endBeat: number,
+    bpm: number
+  ): Promise<AudioBuffer> {
+    const beatSeconds = 60 / bpm;
+    const durationBeats = Math.max(0.25, endBeat - startBeat);
+    const totalDurationSec = durationBeats * beatSeconds + 0.6;
+    const sampleRate = 44100;
+
+    const OfflineCtxClass = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+    const offlineCtx = new OfflineCtxClass(2, Math.ceil(totalDurationSec * sampleRate), sampleRate);
+
+    const masterGain = offlineCtx.createGain();
+    masterGain.gain.setValueAtTime(1.0, 0);
+    masterGain.connect(offlineCtx.destination);
+
+    for (const track of tracks) {
+      if (track.muted) continue;
+
+      // Render audio stem segment
+      if (track.audioStem && track.audioStem.buffer) {
+        const stemBuf = track.audioStem.buffer;
+        const stemStartSec = startBeat * beatSeconds;
+        const stemEndSec = endBeat * beatSeconds;
+
+        if (stemStartSec < stemBuf.duration) {
+          const slice = this.sliceAudioBuffer(stemBuf, stemStartSec, Math.min(stemBuf.duration, stemEndSec));
+          const src = offlineCtx.createBufferSource();
+          src.buffer = slice;
+          const gain = offlineCtx.createGain();
+          gain.gain.setValueAtTime(track.volume, 0);
+          src.connect(gain);
+          gain.connect(masterGain);
+          src.start(0);
+        }
+      }
+
+      // Render MIDI notes within the selected beat range
+      const rangeNotes = track.notes.filter(
+        (n) => n.time + n.duration > startBeat && n.time < endBeat
+      );
+      for (const note of rangeNotes) {
+        const noteStartTime = Math.max(0, (note.time - startBeat) * beatSeconds);
+        const noteDuration = note.duration * beatSeconds;
+        this.synthesizeOfflineVoice(offlineCtx, track, note, noteStartTime, noteDuration, masterGain);
+      }
+    }
+
+    return await offlineCtx.startRendering();
+  }
+
   private synthesizeOfflineVoice(
     ctx: OfflineAudioContext,
     track: Track,
@@ -724,7 +836,7 @@ export class SynthEngine {
     voiceGain.gain.exponentialRampToValueAtTime(0.0001, stopTime + release);
   }
 
-  private audioBufferToWav(buffer: AudioBuffer): Blob {
+  public audioBufferToWav(buffer: AudioBuffer): Blob {
     const numChannels = buffer.numberOfChannels;
     const sampleRate = buffer.sampleRate;
     const format = 1; // PCM

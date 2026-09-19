@@ -9,6 +9,9 @@ import {
   ZoomIn,
   ZoomOut,
   Music,
+  Zap,
+  Shuffle,
+  CheckSquare,
 } from 'lucide-react';
 import { ProjectState, Note, Track } from '../types/daw';
 import { ROOT_NOTES, MUSICAL_SCALES, getNoteName, getPitchColor } from '../audio/constants';
@@ -22,6 +25,7 @@ interface PianoRollViewProps {
   onUpdateProject: (updater: (prev: ProjectState) => ProjectState) => void;
   currentBeat: number;
   onSeek: (beat: number) => void;
+  onOpenDspProcessor?: (mode: 'distort' | 'masterworks' | 'musicmash', source?: 'pianoroll' | 'timeline' | 'upload') => void;
 }
 
 export const PianoRollView: React.FC<PianoRollViewProps> = ({
@@ -29,6 +33,7 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
   onUpdateProject,
   currentBeat,
   onSeek,
+  onOpenDspProcessor,
 }) => {
   const [tool, setTool] = useState<'draw' | 'erase' | 'select'>('draw');
   const [snapValue, setSnapValue] = useState<number>(0.25); // 0.25 beat = 16th note
@@ -382,6 +387,14 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
             <Pencil className="w-3.5 h-3.5" />
           </button>
           <button
+            onClick={() => setTool('select')}
+            className={`p-1.5 rounded transition-colors ${tool === 'select' ? 'bg-sky-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            title="Select Notes (Pointer / Box Selection)"
+          >
+            <MousePointer className="w-3.5 h-3.5" />
+          </button>
+          <button
             onClick={() => setTool('erase')}
             className={`p-1.5 rounded transition-colors ${tool === 'erase' ? 'bg-rose-500 text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -470,6 +483,79 @@ export const PianoRollView: React.FC<PianoRollViewProps> = ({
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
+        </div>
+
+        {/* Selection & Transmutation DSP Actions */}
+        <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
+          <span className="text-[10px] text-slate-400 uppercase font-semibold">
+            {activeTrack?.notes.filter((n) => n.selected).length ? (
+              <span className="text-sky-400 font-bold">
+                {activeTrack.notes.filter((n) => n.selected).length} Selected
+              </span>
+            ) : (
+              <span>Selection:</span>
+            )}
+          </span>
+
+          <button
+            onClick={() => onOpenDspProcessor?.('distort', 'pianoroll')}
+            className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+            title="Distort selected notes (or active track) into audio stem"
+          >
+            <Zap className="w-2.5 h-2.5" /> Distort
+          </button>
+          <button
+            onClick={() => onOpenDspProcessor?.('masterworks', 'pianoroll')}
+            className="px-2 py-0.5 rounded bg-purple-500 hover:bg-purple-400 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+            title="Glitch Stutter selected notes"
+          >
+            <Shuffle className="w-2.5 h-2.5" /> Glitch
+          </button>
+          <button
+            onClick={() => onOpenDspProcessor?.('musicmash', 'pianoroll')}
+            className="px-2 py-0.5 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+            title="MusicMash selected notes"
+          >
+            <Sparkles className="w-2.5 h-2.5" /> Mash
+          </button>
+
+          {activeTrack?.notes.some((n) => n.selected) ? (
+            <button
+              onClick={() => {
+                if (!activeTrack) return;
+                onUpdateProject((prev) => ({
+                  ...prev,
+                  tracks: prev.tracks.map((t) =>
+                    t.id === activeTrack.id
+                      ? { ...t, notes: t.notes.map((n) => ({ ...n, selected: false })) }
+                      : t
+                  ),
+                }));
+              }}
+              className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 hover:text-slate-100 text-[10px]"
+              title="Deselect All Notes"
+            >
+              Clear
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (!activeTrack) return;
+                onUpdateProject((prev) => ({
+                  ...prev,
+                  tracks: prev.tracks.map((t) =>
+                    t.id === activeTrack.id
+                      ? { ...t, notes: t.notes.map((n) => ({ ...n, selected: true })) }
+                      : t
+                  ),
+                }));
+              }}
+              className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 hover:text-white text-[10px]"
+              title="Select All Notes in Track"
+            >
+              Select All
+            </button>
+          )}
         </div>
       </div>
 

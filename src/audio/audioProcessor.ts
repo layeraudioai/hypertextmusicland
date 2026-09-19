@@ -71,26 +71,59 @@ export function computeAudioMetrics(buffer: AudioBuffer, bpm: number, beatsPerBa
   };
 }
 
-export async function mashAudio(buffers: AudioBuffer[]): Promise<AudioBuffer> {
+export async function mashAudio(
+  buffers: AudioBuffer[],
+  sliceBeats: number = 1,
+  bpm: number = 120,
+  pattern: 'random' | 'pingpong' | 'chaos' = 'random'
+): Promise<AudioBuffer> {
   if (buffers.length === 0) throw new Error("No buffers to mash");
-  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-  
-  // Bookmarklet-like shuffling logic
-  let main = buffers[Math.floor(Math.random() * buffers.length)];
-  let out = ctx.createBuffer(main.numberOfChannels, main.length, main.sampleRate);
-  let sliceLen = Math.floor(main.sampleRate / 4); // Slice into ~250ms chunks
+  const ctx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(
+    2,
+    44100,
+    44100
+  );
 
-  for (let s = 0; s < main.length; s += sliceLen) {
-    let b = buffers[Math.floor(Math.random() * buffers.length)];
-    let srcOff = Math.floor(Math.random() * Math.max(1, b.length - sliceLen));
-    let len = Math.min(sliceLen, main.length - s);
-    
-    for (let c = 0; c < out.numberOfChannels; c++) {
-      let d = out.getChannelData(c);
-      let src = b.getChannelData(c % b.numberOfChannels);
+  // Target output length based on longest buffer (or minimum 4 beats)
+  const maxBufferDuration = Math.max(...buffers.map((b) => b.duration));
+  const sampleRate = 44100;
+  const beatSec = 60 / bpm;
+  const sliceSec = Math.max(0.05, sliceBeats * beatSec);
+  const sliceLen = Math.floor(sampleRate * sliceSec);
+  const totalLength = Math.max(sliceLen * 4, Math.ceil(maxBufferDuration * sampleRate));
+
+  const out = ctx.createBuffer(2, totalLength, sampleRate);
+  const fadeLen = Math.min(128, Math.floor(sliceLen * 0.05)); // 128-sample anti-click crossfade
+
+  let bufferIdx = 0;
+  for (let s = 0; s < totalLength; s += sliceLen) {
+    if (pattern === 'random') {
+      bufferIdx = Math.floor(Math.random() * buffers.length);
+    } else if (pattern === 'pingpong') {
+      bufferIdx = (bufferIdx + 1) % buffers.length;
+    } else {
+      bufferIdx = Math.random() < 0.6 ? (bufferIdx + 1) % buffers.length : Math.floor(Math.random() * buffers.length);
+    }
+
+    const b = buffers[bufferIdx];
+    const srcLen = b.length;
+    const srcOffset = Math.floor(Math.random() * Math.max(1, srcLen - sliceLen));
+    const len = Math.min(sliceLen, totalLength - s);
+
+    for (let c = 0; c < 2; c++) {
+      const outD = out.getChannelData(c);
+      const srcD = b.getChannelData(c % b.numberOfChannels);
+
       for (let k = 0; k < len; k++) {
-        if (s + k < d.length) {
-            d[s + k] = src[srcOff + k] || 0;
+        let sample = srcD[(srcOffset + k) % srcLen] || 0;
+        // Smooth crossfade edges
+        if (k < fadeLen) {
+          sample *= k / fadeLen;
+        } else if (k > len - fadeLen) {
+          sample *= (len - k) / fadeLen;
+        }
+        if (s + k < outD.length) {
+          outD[s + k] = Math.max(-1, Math.min(1, outD[s + k] + sample * 0.95));
         }
       }
     }
@@ -98,35 +131,70 @@ export async function mashAudio(buffers: AudioBuffer[]): Promise<AudioBuffer> {
   return out;
 }
 
-export function applyDistortion(buffer: AudioBuffer, amount: number = 0.5): AudioBuffer {
+export function applyDistortion(
+  buffer: AudioBuffer,
+  amount: number = 0.5,
+  mode: 'dynamic' | 'tube' | 'fuzz' | 'bitcrush' = 'dynamic',
+  gain: number = 1.0
+): AudioBuffer {
   const ctx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(
     buffer.numberOfChannels,
     buffer.length,
     buffer.sampleRate
   );
-  
+
   const output = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
   const sampleRate = buffer.sampleRate;
-  
-  // Dynamic waveshaping and bitcrushing inspired by hybrid DSP algorithms
+
   for (let c = 0; c < buffer.numberOfChannels; c++) {
     const input = buffer.getChannelData(c);
     const outputData = output.getChannelData(c);
-    
-    for (let i = 0; i < input.length; i++) {
-      const timeSec = i / sampleRate;
-      const v = Math.abs(Math.sin(timeSec / 2));
-      const st = Math.pow(0.5, 1 + v * 14 * amount);
-      
-      // Waveshaping transfer function
-      let x = input[i] * (1 + amount * 6);
-      if (x > 1) x = 1;
-      if (x < -1) x = -1;
-      const shaped = (Math.PI + 100) * x / (Math.PI + 100 * Math.abs(x) + 0.0001);
-      
-      // Dynamic bitcrush quantization
-      const quantized = Math.round(shaped / st) * st;
-      outputData[i] = Math.max(-1, Math.min(1, quantized * 0.9));
+
+    if (mode === 'tube') {
+      // Warm analog tube saturation (asymmetric hyperbolic tangent)
+      const drive = 1 + amount * 9;
+      for (let i = 0; i < input.length; i++) {
+        const x = input[i] * drive;
+        const shaped = x > 0 ? Math.tanh(x) : Math.tanh(x * 1.3) * 0.85;
+        outputData[i] = Math.max(-1, Math.min(1, shaped * gain));
+      }
+    } else if (mode === 'fuzz') {
+      // Aggressive square/hard clipping fuzz
+      const drive = 1 + amount * 18;
+      for (let i = 0; i < input.length; i++) {
+        let x = input[i] * drive;
+        if (x > 0.85) x = 0.85 + 0.15 * Math.tanh((x - 0.85) * 2);
+        else if (x < -0.85) x = -0.85 + 0.15 * Math.tanh((x + 0.85) * 2);
+        outputData[i] = Math.max(-1, Math.min(1, x * gain * 0.9));
+      }
+    } else if (mode === 'bitcrush') {
+      // Sample rate decimation and bit depth reduction
+      const bits = Math.max(2, Math.round(16 - amount * 12)); // 16-bit down to 4-bit
+      const step = Math.pow(0.5, bits);
+      const decimateFactor = Math.max(1, Math.round(1 + amount * 12));
+      let lastSample = 0;
+
+      for (let i = 0; i < input.length; i++) {
+        if (i % decimateFactor === 0) {
+          const raw = input[i] * (1 + amount * 2);
+          lastSample = Math.round(raw / step) * step;
+        }
+        outputData[i] = Math.max(-1, Math.min(1, lastSample * gain));
+      }
+    } else {
+      // Dynamic waveshaping and bitcrushing (original hybrid)
+      for (let i = 0; i < input.length; i++) {
+        const timeSec = i / sampleRate;
+        const v = Math.abs(Math.sin(timeSec / 2));
+        const st = Math.pow(0.5, 1 + v * 14 * amount);
+
+        let x = input[i] * (1 + amount * 6);
+        if (x > 1) x = 1;
+        if (x < -1) x = -1;
+        const shaped = ((Math.PI + 100) * x) / (Math.PI + 100 * Math.abs(x) + 0.0001);
+        const quantized = Math.round(shaped / st) * st;
+        outputData[i] = Math.max(-1, Math.min(1, quantized * 0.9 * gain));
+      }
     }
   }
   return output;
@@ -136,39 +204,71 @@ export const distortAudio = applyDistortion;
 
 export function processGlitchStutter(
   audioBuffer: AudioBuffer,
-  bpm: number,
-  multiplier: number
+  bpm: number = 120,
+  multiplier: number = 2,
+  division: number = 1, // 1 = 1 beat, 0.5 = 8th note, 0.25 = 16th note, 0.125 = 32nd note
+  reverseChance: number = 0.15,
+  shuffleChance: number = 0.35
 ): AudioBuffer {
   const sampleRate = audioBuffer.sampleRate;
-  const beatLength = Math.floor(sampleRate * (60 / bpm));
-  const numBeats = Math.floor(audioBuffer.length / beatLength);
+  const beatSec = (60 / bpm) * Math.max(0.0625, division);
+  let sliceLength = Math.max(128, Math.floor(sampleRate * beatSec));
 
-  if (numBeats < 1) throw new Error("Audio too short for beat-based processing");
+  // If buffer is short, adapt slice length
+  if (sliceLength > audioBuffer.length) {
+    sliceLength = Math.max(64, Math.floor(audioBuffer.length / 4));
+  }
 
-  const totalBeats = numBeats * multiplier;
+  const numSlices = Math.max(1, Math.floor(audioBuffer.length / sliceLength));
+  const totalSlices = Math.max(1, Math.ceil(numSlices * multiplier));
+
   const ctx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(
     audioBuffer.numberOfChannels,
-    totalBeats * beatLength,
+    totalSlices * sliceLength,
     sampleRate
   );
 
   const output = ctx.createBuffer(
     audioBuffer.numberOfChannels,
-    totalBeats * beatLength,
+    totalSlices * sliceLength,
     sampleRate
   );
+
+  const fadeLen = Math.min(64, Math.floor(sliceLength * 0.08));
 
   for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
     const od = audioBuffer.getChannelData(c);
     const outd = output.getChannelData(c);
-    let sb = 0; // Current beat source index
-    for (let b = 0; b < totalBeats; b++) {
-      // 25% chance to jump randomly, 75% chance to continue sequentially
-      sb = Math.random() < 0.25 ? Math.floor(Math.random() * numBeats) : (sb + 1) % numBeats;
-      const sourceOffset = sb * beatLength;
-      const destOffset = b * beatLength;
-      for (let s = 0; s < beatLength; s++) {
-        outd[destOffset + s] = od[sourceOffset + s] || 0;
+    let currentSlice = 0;
+
+    for (let b = 0; b < totalSlices; b++) {
+      // Decide next slice: random jump vs sequential
+      if (Math.random() < shuffleChance) {
+        currentSlice = Math.floor(Math.random() * numSlices);
+      } else {
+        currentSlice = (currentSlice + 1) % numSlices;
+      }
+
+      const isReversed = Math.random() < reverseChance;
+      const sourceOffset = currentSlice * sliceLength;
+      const destOffset = b * sliceLength;
+
+      for (let s = 0; s < sliceLength; s++) {
+        const readIdx = isReversed
+          ? sourceOffset + (sliceLength - 1 - s)
+          : sourceOffset + s;
+        let sample = od[readIdx] || 0;
+
+        // Anti-click crossfade
+        if (s < fadeLen) {
+          sample *= s / fadeLen;
+        } else if (s > sliceLength - fadeLen) {
+          sample *= (sliceLength - s) / fadeLen;
+        }
+
+        if (destOffset + s < outd.length) {
+          outd[destOffset + s] = sample;
+        }
       }
     }
   }

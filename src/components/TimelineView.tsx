@@ -15,6 +15,9 @@ import {
   Upload,
   FileAudio,
   Check,
+  Zap,
+  Shuffle,
+  Sparkles,
 } from 'lucide-react';
 import { ProjectState, Track, InstrumentId, Note } from '../types/daw';
 import { SOUNDFONT_PRESETS, getPitchColor, getNoteName, DEFAULT_TRACK_EFFECTS } from '../audio/constants';
@@ -146,6 +149,9 @@ interface TimelineViewProps {
   onSeek: (beat: number) => void;
   onSelectTrackForPianoRoll: (trackId: string) => void;
   onOpenTransmuter?: (tab?: 'audio-to-sf2' | 'audio-to-midi' | 'midi-sf2-to-audio' | 'midi-to-audio' | 'sf2-to-audio') => void;
+  timelineSelection?: { startBeat: number; endBeat: number } | null;
+  onUpdateTimelineSelection?: (selection: { startBeat: number; endBeat: number } | null) => void;
+  onOpenDspProcessor?: (mode: 'distort' | 'masterworks' | 'musicmash', source?: 'pianoroll' | 'timeline' | 'upload') => void;
 }
 
 export const TimelineView: React.FC<TimelineViewProps> = ({
@@ -155,10 +161,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   onSeek,
   onSelectTrackForPianoRoll,
   onOpenTransmuter,
+  timelineSelection,
+  onUpdateTimelineSelection,
+  onOpenDspProcessor,
 }) => {
   const [expandedFxTrackId, setExpandedFxTrackId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isDragOverTimeline, setIsDragOverTimeline] = useState(false);
+  const [isRulerDragging, setIsRulerDragging] = useState(false);
+  const [rulerDragStartBeat, setRulerDragStartBeat] = useState<number | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement>(null);
 
   const totalBeats = project.totalBars * 4;
@@ -380,6 +391,42 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          {timelineSelection && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-950/90 border border-cyan-700/80 text-xs font-mono text-cyan-200 shadow-lg">
+              <span className="font-semibold text-cyan-300">
+                Range: {timelineSelection.startBeat.toFixed(1)} - {timelineSelection.endBeat.toFixed(1)}
+              </span>
+              <button
+                onClick={() => onOpenDspProcessor?.('distort', 'timeline')}
+                className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                title="Distort Selected Timeline Range"
+              >
+                <Zap className="w-2.5 h-2.5" /> Distort
+              </button>
+              <button
+                onClick={() => onOpenDspProcessor?.('masterworks', 'timeline')}
+                className="px-2 py-0.5 rounded bg-purple-500 hover:bg-purple-400 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                title="Glitch Stutter Selected Timeline Range"
+              >
+                <Shuffle className="w-2.5 h-2.5" /> Glitch
+              </button>
+              <button
+                onClick={() => onOpenDspProcessor?.('musicmash', 'timeline')}
+                className="px-2 py-0.5 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                title="MusicMash Selected Timeline Range"
+              >
+                <Sparkles className="w-2.5 h-2.5" /> Mash
+              </button>
+              <button
+                onClick={() => onUpdateTimelineSelection?.(null)}
+                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 hover:text-slate-100 text-[10px]"
+                title="Clear Selection"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {toastMessage && (
             <div className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-700/60 text-emerald-300 font-mono text-[11px] flex items-center gap-1.5 animate-fadeIn">
               <Check className="w-3 h-3 text-emerald-400" />
@@ -420,13 +467,39 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
             </div>
 
             <div
-              className="flex relative cursor-pointer"
+              className="flex relative cursor-pointer select-none"
               style={{ width: `${timelineWidth}px` }}
-              onClick={(e) => {
+              onMouseDown={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 const clickX = e.clientX - rect.left;
                 const beat = Math.max(0, Math.min(totalBeats, clickX / pixelsPerBeat));
+                setIsRulerDragging(true);
+                setRulerDragStartBeat(beat);
                 onSeek(beat);
+              }}
+              onMouseMove={(e) => {
+                if (!isRulerDragging || rulerDragStartBeat === null) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const moveX = e.clientX - rect.left;
+                const currentBeatHover = Math.max(0, Math.min(totalBeats, moveX / pixelsPerBeat));
+                const s = Math.min(rulerDragStartBeat, currentBeatHover);
+                const end = Math.max(rulerDragStartBeat, currentBeatHover);
+                if (end - s >= 0.5) {
+                  onUpdateTimelineSelection?.({
+                    startBeat: Math.round(s * 2) / 2,
+                    endBeat: Math.round(end * 2) / 2,
+                  });
+                }
+              }}
+              onMouseUp={() => {
+                setIsRulerDragging(false);
+                setRulerDragStartBeat(null);
+              }}
+              onMouseLeave={() => {
+                if (isRulerDragging) {
+                  setIsRulerDragging(false);
+                  setRulerDragStartBeat(null);
+                }
               }}
             >
               {Array.from({ length: project.totalBars }).map((_, barIdx) => (
@@ -447,6 +520,21 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
               ))}
             </div>
           </div>
+
+          {/* Timeline Range Selection Highlight */}
+          {timelineSelection && (
+            <div
+              className="absolute top-0 bottom-0 bg-cyan-500/15 border-x-2 border-cyan-400 z-20 pointer-events-none transition-all"
+              style={{
+                left: `${320 + timelineSelection.startBeat * pixelsPerBeat}px`,
+                width: `${Math.max(4, (timelineSelection.endBeat - timelineSelection.startBeat) * pixelsPerBeat)}px`,
+              }}
+            >
+              <div className="absolute top-9 left-1.5 px-1.5 py-0.5 rounded bg-cyan-950/90 border border-cyan-500 text-cyan-300 font-mono text-[9px] shadow-sm">
+                Region: {timelineSelection.startBeat.toFixed(1)} - {timelineSelection.endBeat.toFixed(1)} Beats
+              </div>
+            </div>
+          )}
 
           {/* Scrubbing Playhead Line (extends down the whole timeline) */}
           <div
@@ -587,6 +675,36 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     </select>
 
                     <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          onUpdateProject((p) => ({ ...p, selectedTrackId: track.id }));
+                          onOpenDspProcessor?.('distort', 'timeline');
+                        }}
+                        className="p-1 rounded bg-slate-800 hover:bg-amber-950/70 text-slate-400 hover:text-amber-400 transition-colors"
+                        title="Distort: Process track through dynamic waveshaper DSP"
+                      >
+                        <Zap className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          onUpdateProject((p) => ({ ...p, selectedTrackId: track.id }));
+                          onOpenDspProcessor?.('masterworks', 'timeline');
+                        }}
+                        className="p-1 rounded bg-slate-800 hover:bg-purple-950/70 text-slate-400 hover:text-purple-400 transition-colors"
+                        title="MasterWorks: Beat-synced glitch shuffle on track"
+                      >
+                        <Shuffle className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          onUpdateProject((p) => ({ ...p, selectedTrackId: track.id }));
+                          onOpenDspProcessor?.('musicmash', 'timeline');
+                        }}
+                        className="p-1 rounded bg-slate-800 hover:bg-cyan-950/70 text-slate-400 hover:text-cyan-400 transition-colors"
+                        title="MusicMash: Remix and mash track"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </button>
                       <button
                         onClick={() => onSelectTrackForPianoRoll(track.id)}
                         className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-sky-400"

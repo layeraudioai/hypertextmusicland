@@ -27,6 +27,11 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { FullSaveZipModal } from './components/FullSaveZipModal';
 import { GitHubSyncModal } from './components/GitHubSyncModal';
 import { SettingsPage } from './components/SettingsPage';
+import {
+  TransmutationProcessorModal,
+  TransmutationMode,
+  TransmutationSourceType,
+} from './components/TransmutationProcessorModal';
 import { loadPerformanceGenome, applyGenomeToEngine } from './utils/performanceOptimizer';
 
 export default function App() {
@@ -110,6 +115,18 @@ export default function App() {
   const [isFullSaveZipOpen, setIsFullSaveZipOpen] = useState(false);
   const [isGitHubSyncOpen, setIsGitHubSyncOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Transmutation DSP Processor Modal (Distort / MasterWorks Glitch / MusicMash)
+  const [transmutationModal, setTransmutationModal] = useState<{
+    isOpen: boolean;
+    mode: TransmutationMode;
+    initialSource?: TransmutationSourceType;
+  }>({
+    isOpen: false,
+    mode: 'distort',
+    initialSource: 'timeline',
+  });
+  const [timelineSelection, setTimelineSelection] = useState<{ startBeat: number; endBeat: number } | null>(null);
 
   // References for high-precision audio scheduler
   const projectRef = useRef(project);
@@ -522,183 +539,63 @@ export default function App() {
     });
   };
 
-  // DISTORT: Dynamic Waveshaper & Bitcrush Resynthesis
-  const distort = async () => {
-    let audioTrack = project.tracks.find((t) => t.id === project.selectedTrackId && t.audioStem?.buffer);
-    if (!audioTrack) {
-      audioTrack = project.tracks.find((t) => t.audioStem?.buffer);
+  // Unified DSP Transmutation Opener (Distort, MasterWorks Glitch Shuffle, MusicMash)
+  // Supports selections from DAW timeline, Piano Roll notes, or audio file uploads
+  const openDspProcessor = (
+    mode: TransmutationMode,
+    source?: TransmutationSourceType
+  ) => {
+    let chosenSource = source;
+    if (!chosenSource) {
+      const curTrack = project.tracks.find((t) => t.id === project.selectedTrackId);
+      if (activeView === 'pianoroll' || curTrack?.notes.some((n) => n.selected)) {
+        chosenSource = 'pianoroll';
+      } else if (timelineSelection) {
+        chosenSource = 'timeline';
+      } else if (curTrack?.audioStem?.buffer || (curTrack && curTrack.notes.length > 0)) {
+        chosenSource = 'timeline';
+      } else {
+        chosenSource = 'upload';
+      }
     }
-
-    let bufferToDistort: AudioBuffer | null = audioTrack?.audioStem?.buffer || null;
-    let sourceName = audioTrack?.name || 'Sample';
-
-    if (!bufferToDistort) {
-      setToastMessage('Choose an audio sample from your computer to distort...');
-      const picked = await pickAudioFiles(false);
-      if (picked.length === 0) return;
-      bufferToDistort = picked[0];
-      sourceName = 'Imported Audio';
-    }
-
-    try {
-      const distortedBuffer = applyDistortion(bufferToDistort, 0.65);
-      const wavBlob = audioBufferToWavBlob(distortedBuffer);
-      const wavUrl = URL.createObjectURL(wavBlob);
-      const durationBeats = (distortedBuffer.duration * project.bpm) / 60;
-
-      const newTrackId = `track-distort-${Date.now()}`;
-      const newTrack: Track = {
-        id: newTrackId,
-        name: `⚡ Distorted: ${sourceName}`,
-        instrument: 'synth_lead',
-        color: '#f97316',
-        volume: 0.85,
-        pan: 0,
-        muted: false,
-        solo: false,
-        armed: false,
-        notes: [],
-        effects: { ...DEFAULT_TRACK_EFFECTS, distortion: 0.5 },
-        audioStem: {
-          id: `stem-${Date.now()}`,
-          name: `Distorted ${sourceName}`,
-          url: wavUrl,
-          buffer: distortedBuffer,
-          duration: durationBeats,
-        },
-      };
-
-      setProject((prev) => ({
-        ...prev,
-        totalBars: Math.max(prev.totalBars, Math.ceil(durationBeats / 4)),
-        selectedTrackId: newTrackId,
-        tracks: [...prev.tracks, newTrack],
-      }));
-
-      setToastMessage(`⚡ Distorted track rendered and placed onto timeline!`);
-      setTimeout(() => setToastMessage(null), 4000);
-    } catch (err: any) {
-      console.error('Distortion failed:', err);
-      setToastMessage('Distortion error: ' + err.message);
-    }
+    setTransmutationModal({
+      isOpen: true,
+      mode,
+      initialSource: chosenSource,
+    });
   };
 
-  // MASTERWORKS: Beat-Synced Glitch Shuffle & Stutter Resequencing
-  const masterWorks = async () => {
-    let audioTrack = project.tracks.find((t) => t.id === project.selectedTrackId && t.audioStem?.buffer);
-    if (!audioTrack) {
-      audioTrack = project.tracks.find((t) => t.audioStem?.buffer);
-    }
+  const distort = () => openDspProcessor('distort');
+  const masterWorks = () => openDspProcessor('masterworks');
+  const musicMash = () => openDspProcessor('musicmash');
 
-    let bufferToProcess: AudioBuffer | null = audioTrack?.audioStem?.buffer || null;
-    let sourceName = audioTrack?.name || 'Audio Track';
-
-    if (!bufferToProcess) {
-      setToastMessage('Choose an audio sample from your computer for MasterWorks glitch shuffle...');
-      const picked = await pickAudioFiles(false);
-      if (picked.length === 0) return;
-      bufferToProcess = picked[0];
-      sourceName = 'Imported Sample';
-    }
-
-    try {
-      const glitchedBuffer = processGlitchStutter(bufferToProcess, project.bpm || 120, 2);
-      const wavBlob = audioBufferToWavBlob(glitchedBuffer);
-      const wavUrl = URL.createObjectURL(wavBlob);
-      const durationBeats = (glitchedBuffer.duration * project.bpm) / 60;
-
-      const newTrackId = `track-glitch-${Date.now()}`;
-      const newTrack: Track = {
-        id: newTrackId,
-        name: `🔀 MasterWorks Glitch: ${sourceName}`,
-        instrument: 'chiptune',
-        color: '#a855f7',
-        volume: 0.88,
-        pan: 0,
-        muted: false,
-        solo: false,
-        armed: false,
-        notes: [],
-        effects: { ...DEFAULT_TRACK_EFFECTS, delaySend: 0.3 },
-        audioStem: {
-          id: `stem-${Date.now()}`,
-          name: `Glitch Stutter ${sourceName}`,
-          url: wavUrl,
-          buffer: glitchedBuffer,
-          duration: durationBeats,
-        },
-      };
-
-      setProject((prev) => ({
+  const handleInjectProcessedTrack = (newTrack: Track, insertAtBeat: number = 0) => {
+    setProject((prev) => {
+      const stemDuration = newTrack.audioStem?.duration || 4;
+      const totalNeededBeats = insertAtBeat + stemDuration;
+      const neededBars = Math.max(prev.totalBars, Math.ceil(totalNeededBeats / 4));
+      return {
         ...prev,
-        totalBars: Math.max(prev.totalBars, Math.ceil(durationBeats / 4)),
-        selectedTrackId: newTrackId,
+        totalBars: neededBars,
         tracks: [...prev.tracks, newTrack],
-      }));
-
-      setToastMessage(`🔀 MasterWorks Glitch Stutter rendered onto timeline!`);
-      setTimeout(() => setToastMessage(null), 4000);
-    } catch (err: any) {
-      console.error('MasterWorks failed:', err);
-      setToastMessage('MasterWorks error: ' + err.message);
-    }
+        selectedTrackId: newTrack.id,
+      };
+    });
+    setToastMessage(`✓ Created track "${newTrack.name}"!`);
+    setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // MUSICMASH: Multi-Track Ensemble Mashup Slicer
-  const musicMash = async () => {
-    const audioTracks = project.tracks.filter((t) => t.audioStem && t.audioStem.buffer);
-    let buffers: AudioBuffer[] = audioTracks.map((t) => t.audioStem!.buffer!);
-
-    if (buffers.length === 0) {
-      setToastMessage('Select audio files to mash and slice together...');
-      const picked = await pickAudioFiles(true);
-      if (picked.length === 0) return;
-      buffers = picked;
-    } else if (buffers.length === 1) {
-      buffers = [buffers[0], buffers[0]];
-    }
-
-    try {
-      const mashedBuffer = await mashAudio(buffers);
-      const wavBlob = audioBufferToWavBlob(mashedBuffer);
-      const wavUrl = URL.createObjectURL(wavBlob);
-      const durationBeats = (mashedBuffer.duration * project.bpm) / 60;
-
-      const newTrackId = `track-mash-${Date.now()}`;
-      const newTrack: Track = {
-        id: newTrackId,
-        name: `🧬 MusicMash: Stems Remix`,
-        instrument: 'ambient_pad',
-        color: '#06b6d4',
-        volume: 0.85,
-        pan: 0,
-        muted: false,
-        solo: false,
-        armed: false,
-        notes: [],
-        effects: { ...DEFAULT_TRACK_EFFECTS, reverbSend: 0.25 },
-        audioStem: {
-          id: `stem-${Date.now()}`,
-          name: `Mashed Remixed Stems`,
-          url: wavUrl,
-          buffer: mashedBuffer,
-          duration: durationBeats,
-        },
-      };
-
-      setProject((prev) => ({
+  const handleReplaceTrackStem = (trackId: string, stem: any) => {
+    setProject((prev) => {
+      const neededBars = Math.max(prev.totalBars, Math.ceil((stem.duration || 4) / 4));
+      return {
         ...prev,
-        totalBars: Math.max(prev.totalBars, Math.ceil(durationBeats / 4)),
-        selectedTrackId: newTrackId,
-        tracks: [...prev.tracks, newTrack],
-      }));
-
-      setToastMessage(`🧬 MusicMash complete! Cutup remix placed onto timeline.`);
-      setTimeout(() => setToastMessage(null), 4000);
-    } catch (err: any) {
-      console.error('MusicMash failed:', err);
-      setToastMessage('MusicMash error: ' + err.message);
-    }
+        totalBars: neededBars,
+        tracks: prev.tracks.map((t) => (t.id === trackId ? { ...t, audioStem: stem } : t)),
+      };
+    });
+    setToastMessage(`✓ Audio stem updated on track!`);
+    setTimeout(() => setToastMessage(null), 4000);
   };
 
   // Clear Project Handler
@@ -836,6 +733,9 @@ export default function App() {
               if (tab) setTransmuterTab(tab);
               setIsTransmuterOpen(true);
             }}
+            timelineSelection={timelineSelection}
+            onUpdateTimelineSelection={setTimelineSelection}
+            onOpenDspProcessor={openDspProcessor}
           />
         )}
 
@@ -845,6 +745,7 @@ export default function App() {
             onUpdateProject={setProject}
             currentBeat={currentBeat}
             onSeek={handleSeek}
+            onOpenDspProcessor={openDspProcessor}
           />
         )}
 
@@ -902,6 +803,18 @@ export default function App() {
         project={project}
         onUpdateProject={setProject}
         initialTab={transmuterTab}
+      />
+
+      {/* Unified DSP Transmutation Suite: Distort, MasterWorks Glitch Shuffle, MusicMash */}
+      <TransmutationProcessorModal
+        isOpen={transmutationModal.isOpen}
+        onClose={() => setTransmutationModal((prev) => ({ ...prev, isOpen: false }))}
+        project={project}
+        mode={transmutationModal.mode}
+        initialSource={transmutationModal.initialSource}
+        timelineSelection={timelineSelection}
+        onInjectTrack={handleInjectProcessedTrack}
+        onReplaceTrackStem={handleReplaceTrackStem}
       />
 
       {/* Clear Project Confirmation Dialog */}
