@@ -13,22 +13,40 @@ async function openDB(): Promise<IDBDatabase> {
 }
 
 export async function saveAudioData(id: string, data: ArrayBuffer) {
+  console.log(`[Persistence] Saving ${data.byteLength} bytes to IndexedDB for ID: ${id}`);
   const db = await openDB();
   return new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     transaction.objectStore(STORE_NAME).put(data, id);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+    transaction.oncomplete = () => {
+      console.log(`[Persistence] Successfully saved ID: ${id}`);
+      resolve();
+    };
+    transaction.onerror = () => {
+      console.error(`[Persistence] Error saving ID: ${id}`, transaction.error);
+      reject(transaction.error);
+    };
   });
 }
 
 export async function getAudioData(id: string): Promise<ArrayBuffer | undefined> {
+  console.log(`[Persistence] Attempting to retrieve ID: ${id} from IndexedDB`);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readonly');
     const request = transaction.objectStore(STORE_NAME).get(id);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      if (request.result) {
+        console.log(`[Persistence] Found ID: ${id} (${request.result.byteLength} bytes)`);
+      } else {
+        console.log(`[Persistence] ID: ${id} not found in IndexedDB`);
+      }
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      console.error(`[Persistence] Error retrieving ID: ${id}`, request.error);
+      reject(request.error);
+    };
   });
 }
 

@@ -51,6 +51,22 @@ export const VisionFlowStudio: React.FC<VisionFlowStudioProps> = ({
   };
   const config: VisionFlowConfig = { ...defaultConfig, ...(project.visionFlow || {}) };
 
+  const projectRef = useRef(project);
+  const currentBeatRef = useRef(currentBeat);
+  const isPlayingRef = useRef(isPlaying);
+
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+
+  useEffect(() => {
+    currentBeatRef.current = currentBeat;
+  }, [currentBeat]);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
   // Initialize renderer loop
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -71,17 +87,17 @@ export const VisionFlowStudio: React.FC<VisionFlowStudioProps> = ({
 
     visionFlow.init(canvas, synth.getAnalyser());
     visionFlow.startRenderLoop(
-      () => project.visionFlow,
-      () => currentBeat,
-      () => project.tracks,
-      () => isPlaying
+      () => projectRef.current.visionFlow,
+      () => currentBeatRef.current,
+      () => projectRef.current.tracks,
+      () => isPlayingRef.current
     );
 
     return () => {
       observer.disconnect();
       visionFlow.stopRenderLoop();
     };
-  }, [project.tracks, currentBeat, isPlaying, project.visionFlow]);
+  }, []); // Remove dependencies as we use refs now
 
   // Video recording timer
   useEffect(() => {

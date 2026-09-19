@@ -78,9 +78,10 @@ export default function App() {
   });
 
   useEffect(() => {
+    console.log('[App] Starting hydration effect');
     async function init() {
       const hydrated = await hydrateProject(project);
-      hydrated.customInstruments?.forEach(inst => sampleManager.registerInstrument(inst));
+      console.log('[App] Hydration finished');
       setProject(hydrated);
     }
     init();

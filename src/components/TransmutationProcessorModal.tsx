@@ -28,6 +28,7 @@ import {
   audioBufferToWavBlob,
 } from '../audio/audioProcessor';
 import { synth } from '../audio/synthEngine';
+import { saveAudioData } from '../utils/audioPersistence';
 
 export type TransmutationMode = 'distort' | 'masterworks' | 'musicmash';
 export type TransmutationSourceType = 'pianoroll' | 'timeline' | 'upload';
@@ -469,7 +470,7 @@ export const TransmutationProcessorModal: React.FC<TransmutationProcessorModalPr
     }
 
     const insertAt = sourceType === 'timeline' ? startBeat : 0;
-
+...
     const newTrack: Track = {
       id: trackId,
       name: trackName,
@@ -496,6 +497,11 @@ export const TransmutationProcessorModal: React.FC<TransmutationProcessorModalPr
       },
     };
 
+    // Persist stem buffer
+    const wavBlob = await audioBufferToWavBlob(outputBuffer);
+    const arrayBuffer = await wavBlob.arrayBuffer();
+    await saveAudioData(newTrack.audioStem!.id, arrayBuffer);
+
     onInjectTrack(newTrack, insertAt);
     setToastMessage(`✓ Injected "${trackName}" into DAW Timeline at Beat ${insertAt}!`);
     setTimeout(() => {
@@ -504,7 +510,7 @@ export const TransmutationProcessorModal: React.FC<TransmutationProcessorModalPr
   };
 
   // Output 2: Replace current track's audio stem
-  const handleReplaceCurrentStem = () => {
+  const handleReplaceCurrentStem = async () => {
     if (!outputBuffer || !outputUrl || !onReplaceTrackStem) return;
     const targetTrackId =
       sourceType === 'timeline' && timelineTrackId !== 'all_tracks'
@@ -521,6 +527,11 @@ export const TransmutationProcessorModal: React.FC<TransmutationProcessorModalPr
       duration: durationBeats,
       buffer: outputBuffer,
     };
+
+    // Persist stem buffer
+    const wavBlob = await audioBufferToWavBlob(outputBuffer);
+    const arrayBuffer = await wavBlob.arrayBuffer();
+    await saveAudioData(newStem.id, arrayBuffer);
 
     onReplaceTrackStem(targetTrackId, newStem);
     setToastMessage(`✓ Replaced stem on track!`);
