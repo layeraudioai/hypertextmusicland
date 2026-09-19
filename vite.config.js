@@ -1,8 +1,8 @@
-import { defineConfig } from 'vite-plus';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
-  base: './', // Ensures relative paths in the generated index.html\
+  base: './',
   plugins: [
     tailwindcss(),
     react()
