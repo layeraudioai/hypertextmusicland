@@ -448,7 +448,7 @@ export const TransmutationProcessorModal: React.FC<TransmutationProcessorModalPr
   };
 
   // Output 1: Inject as new track into DAW
-  const handleInjectAsNewTrack = () => {
+  const handleInjectAsNewTrack = async () => {
     if (!outputBuffer || !outputUrl) return;
 
     const bpm = project.bpm || 120;
@@ -470,8 +470,9 @@ export const TransmutationProcessorModal: React.FC<TransmutationProcessorModalPr
     }
 
     const insertAt = sourceType === 'timeline' ? startBeat : 0;
-...
+
     const newTrack: Track = {
+
       id: trackId,
       name: trackName,
       instrument,
