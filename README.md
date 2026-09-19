@@ -10,3 +10,5 @@ to build:
 1st: double click aio.bat
 --
 alt + f4 to quit the exe
+-
+press windows flag key then right click on icon in taskbar to minimize
