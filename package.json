@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "npm run build:aio",
-    "build": "npm install && npm audit fix --force && npm fund && npm run build",
-    "build:aio": "npm install && npm audit fix --force && npm fund && npm run build && cd scripts && python inline.py",
+    "build": "npm install && npm audit fix --force && npm fund && vite build",
+    "build:aio": "npm run build && cd scripts && python inline.py",
     "start": "node dist/index.html",
     "preview": "vite preview",
     "clean": "rm -rf dist",
