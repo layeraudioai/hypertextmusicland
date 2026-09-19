@@ -3,6 +3,7 @@ import { CheckCircle2 } from 'lucide-react';
 import { ProjectState, Track, Note } from './types/daw';
 import { createDefaultProject } from './audio/defaultProject';
 import { synth } from './audio/synthEngine';
+import { hydrateProject } from './utils/audioHydration';
 import { parseMidiFile, exportToMidiFile } from './audio/midiParser';
 import {
   sampleManager,
@@ -75,6 +76,15 @@ export default function App() {
     }
     return createDefaultProject();
   });
+
+  useEffect(() => {
+    async function init() {
+      const hydrated = await hydrateProject(project);
+      hydrated.customInstruments?.forEach(inst => sampleManager.registerInstrument(inst));
+      setProject(hydrated);
+    }
+    init();
+  }, []);
 
   const [activeView, setActiveView] = useState<'timeline' | 'pianoroll' | 'video' | 'mixer' | 'settings'>('timeline');
 

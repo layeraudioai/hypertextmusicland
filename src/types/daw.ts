@@ -97,6 +97,7 @@ export interface ProjectState {
   selectedTrackId: string;
   masterVolume: number;
   masterLimiter: boolean;
+  customInstruments?: CustomSf2Instrument[];
   visionFlow: VisionFlowConfig;
 }
 

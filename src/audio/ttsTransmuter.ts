@@ -1,6 +1,7 @@
 // TTS Transmuter: Synthesizes speech via meSpeak, converts to SoundFont 2 (.sf2),
 // and extracts melodic/rhythmic MIDI notes in a unified "All Together" pipeline.
 
+import { saveAudioData } from '../utils/audioPersistence';
 import { Note, Track, CustomSf2Instrument } from '../types/daw';
 import { sampleManager, decodeAudioFile, detectPitchYIN } from './audioProcessor';
 import { generateSf2Binary } from './sf2Generator';
@@ -215,6 +216,7 @@ export async function transmuteTtsAllTogether(
 
   // Register into sampleManager for direct playback in DAW
   const sf2InstId = `custom_tts_${Date.now()}`;
+  await saveAudioData(sf2InstId, sf2Binary.buffer);
   const sf2Instrument: CustomSf2Instrument = {
     id: sf2InstId,
     name: `🗣️ ${instrumentName}`,

@@ -1,3 +1,4 @@
+import { saveAudioData } from '../utils/audioPersistence';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Upload,
@@ -376,15 +377,24 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
       setTranscribedNotes(notes);
 
       // 3. Register as in-memory stem SoundFont instrument
-      synth.registerCustomSample('uploaded_stem', buffer, detected.midiPitch);
-      sampleManager.registerInstrument({
+      const arrayBuffer = await file.arrayBuffer();
+      await saveAudioData('uploaded_stem', arrayBuffer);
+      
+      const newInstrument: CustomSf2Instrument = {
         id: 'uploaded_stem',
         name: stemName,
-        audioBuffer: buffer,
         rootPitch: detected.midiPitch,
         sampleRate: buffer.sampleRate,
         duration: buffer.duration,
-      });
+      };
+      
+      synth.registerCustomSample('uploaded_stem', buffer, detected.midiPitch);
+      sampleManager.registerInstrument({ ...newInstrument, audioBuffer: buffer });
+      
+      onUpdateProject(prev => ({
+        ...prev,
+        customInstruments: [...(prev.customInstruments || []).filter(i => i.id !== 'uploaded_stem'), newInstrument]
+      }));
 
       // 4. Automatically select uploaded audio stem and transcribed melody in merged studio
       setMidiSource('uploaded_transcribed');
@@ -965,7 +975,17 @@ export const AudioTransmuterModal: React.FC<AudioTransmuterModalProps> = ({
         pitchCorrection: ttsCorrection,
       });
       setTtsResult(res);
+
+      // Add instrument to project
+      onUpdateProject(prev => {
+        const { audioBuffer, ...instrumentWithoutBuffer } = res.sf2Instrument;
+        return {
+          ...prev,
+          customInstruments: [...(prev.customInstruments || []), instrumentWithoutBuffer]
+        };
+      });
       setNotification(`✓ Transmuted speech! Audio Stem + SF2 Instrument + ${res.transcribedNotes.length} MIDI notes generated.`);
+
       setTimeout(() => setNotification(null), 5000);
     } catch (err: any) {
       console.error('TTS synthesis error:', err);
