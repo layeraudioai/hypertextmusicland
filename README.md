@@ -8,4 +8,5 @@ to build:
 -
 0th: install python and node.js
 1st: double click aio.bat
-
+--
+alt + f4 to quit the exe
